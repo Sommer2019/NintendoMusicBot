@@ -303,7 +303,13 @@ const commands = [
     .setDescription("Zeigt, ob gerade gestreamt wird"),
   new SlashCommandBuilder()
     .setName("play")
-    .setDescription("Wiedergabe fortsetzen"),
+    .setDescription("Wiedergabe fortsetzen – oder mit Titel: suchen und abspielen")
+    .addStringOption((o) =>
+      o
+        .setName("titel")
+        .setDescription("Optional: Track suchen und abspielen")
+        .setRequired(false)
+    ),
   new SlashCommandBuilder()
     .setName("pause")
     .setDescription("Wiedergabe pausieren"),
@@ -443,9 +449,24 @@ client.on(Events.InteractionCreate, async (interaction) => {
     await interaction.deferReply();
     try {
       switch (interaction.commandName) {
-        case "play":
+        case "play": {
+          const titel = interaction.options.getString("titel");
+          if (titel) {
+            // Mit Titel: suchen und abspielen (wie /track).
+            const res = await h.search(titel);
+            if (!res) {
+              return interaction.editReply(
+                `Nichts Abspielbares fuer **${titel}** gefunden.`
+              );
+            }
+            return interaction.editReply({
+              embeds: [trackEmbed("🔎 Spielt jetzt", res)],
+            });
+          }
+          // Ohne Titel: nur fortsetzen.
           await h.play();
           return interaction.editReply("▶️ Weiter geht's.");
+        }
         case "pause":
           await h.pause();
           return interaction.editReply("⏸️ Pausiert.");

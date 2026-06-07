@@ -158,12 +158,9 @@ async function startNintendoMusic(options = {}) {
   }
   await tryCloseModals(page);
 
-  // Wiedergabe starten (best effort – Selektor ggf. an echte UI anpassen).
-  await tryStartPlayback(page);
-
-  // Diagnose: nach kurzer Wartezeit den echten Media-/DRM-Status loggen.
-  // Klaert "kein Ton" -> spielt das <audio> wirklich, oder steckt DRM fest?
-  setTimeout(() => logMediaDiagnostics(page).catch(() => {}), 7000);
+  // Kein Auto-Play beim Start: Ohne gespeicherte Queue gibt es nichts
+  // abzuspielen. Die Wiedergabe wird gezielt per /play <titel> bzw. /track
+  // gestartet (siehe controls.search).
 
   // Audio-Routing:
   //   Linux/Pi -> bereits ueber PULSE_SINK beim Start erledigt, nichts zu tun.
