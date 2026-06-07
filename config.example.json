@@ -1,0 +1,13 @@
+{
+  "token": "HIER_DEIN_BOT_TOKEN",
+  "guildId": "",
+  "audioDevice": "CABLE Output (VB-Audio Virtual Cable)",
+  "ffmpegPath": "",
+  "audioSource": "",
+  "browser": {
+    "enabled": true,
+    "visible": false,
+    "executablePath": "",
+    "audioSink": "ntmusic"
+  }
+}

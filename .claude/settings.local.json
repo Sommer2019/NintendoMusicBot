@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm --version)",
+      "Bash(ffmpeg -version)",
+      "Bash(Select-Object -First 1)",
+      "Bash(Get-ChildItem -Force C:\\\\Users\\\\Robin\\\\IdeaProjects\\\\DCNintendoMusic)",
+      "Bash(Select-Object Name)",
+      "PowerShell($ff = \\(Get-Command ffmpeg -ErrorAction SilentlyContinue\\); if \\($ff\\) { \"ffmpeg: $\\($ff.Source\\)\" } else { \"ffmpeg: NOT FOUND\" }; \"---dir---\"; Get-ChildItem -Force \"C:\\\\Users\\\\Robin\\\\IdeaProjects\\\\DCNintendoMusic\" | Select-Object Name)",
+      "PowerShell(npm install 2>&1)",
+      "Bash(node --check index.js)",
+      "Bash(node --check browser.js)",
+      "Bash(node --check test-browser.js)",
+      "Bash(node --check inspect-player.js)"
+    ]
+  }
+}
