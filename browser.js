@@ -250,6 +250,11 @@ async function startNintendoMusic(options = {}) {
     /** Track suchen und ersten Treffer abspielen. */
     search: (query) => searchAndPlay(page, query),
 
+    /** Mehrere Treffer als Liste (fuer Auswahlmenue). */
+    searchResults: (query, limit) => searchResults(page, query, limit),
+    /** Den N-ten Treffer abspielen. */
+    playResultIndex: (query, index) => playResultIndex(page, query, index),
+
     /** Track suchen und als Naechstes einreihen. */
     queueNext: (query) => queueNext(page, query),
 
@@ -678,21 +683,32 @@ async function performSearch(page, query) {
   }
 
   await input.click();
+  await input.fill(""); // alte Eingabe/Ergebnisse zuruecksetzen
   await input.fill(query);
   await input.press("Enter");
 
+  // Auf FRISCHE Ergebnisse warten: Panel da UND enthaelt ein Wort der Suche
+  // (sonst greifen wir evtl. auf veraltete Ergebnisse der vorigen Suche zu),
+  // ODER "nichts gefunden".
+  const probe = (query.match(/[\p{L}\p{N}]{3,}/u) || [query])[0];
   try {
     await page.waitForFunction(
-      () =>
-        document.querySelector("#results-panel") ||
-        Array.from(document.querySelectorAll("p")).some((p) =>
+      (w) => {
+        const noHit = Array.from(document.querySelectorAll("p")).some((p) =>
           /nichts gefunden/i.test(p.textContent || "")
-        ),
-      { timeout: 6000 }
+        );
+        const panel = document.querySelector("#results-panel");
+        return (
+          noHit || (panel && new RegExp(w, "iu").test(panel.textContent || ""))
+        );
+      },
+      probe,
+      { timeout: 7000 }
     );
   } catch {
-    // weiter – Treffer wird unten ohnehin geprueft
+    // weiter – best effort
   }
+  await page.waitForTimeout(300); // kurz settlen lassen
 
   const nothing = await page
     .getByText(/nichts gefunden/i)
@@ -739,6 +755,43 @@ async function searchAndPlay(page, query) {
       `[browser] Suche "${query}": kein abspielbarer Track ` +
         "(evtl. nur Spiele/Playlists gefunden)."
     );
+    return false;
+  }
+}
+
+/** Liefert die ersten N Track-Treffer als Info-Liste (ohne abzuspielen). */
+async function searchResults(page, query, limit = 5) {
+  if (!(await performSearch(page, query))) return [];
+  const cards = page.locator('#results-panel div[role="button"]');
+  try {
+    await cards.first().waitFor({ state: "visible", timeout: 5000 });
+  } catch {
+    return [];
+  }
+  const n = Math.min(await cards.count(), limit);
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    try {
+      out.push(await readCardInfo(cards.nth(i)));
+    } catch {
+      // Treffer ueberspringen
+    }
+  }
+  return out;
+}
+
+/** Spielt den N-ten Track-Treffer einer (erneuten) Suche ab. */
+async function playResultIndex(page, query, index) {
+  if (!(await performSearch(page, query))) return false;
+  const card = page.locator('#results-panel div[role="button"]').nth(index);
+  try {
+    await card.waitFor({ state: "visible", timeout: 5000 });
+    const info = await readCardInfo(card);
+    await card.click();
+    console.log(`[browser] Suche "${query}" -> spiele #${index} "${info.title}".`);
+    return info;
+  } catch {
+    console.warn(`[browser] Treffer #${index} fuer "${query}" nicht abspielbar.`);
     return false;
   }
 }
@@ -866,32 +919,47 @@ async function clearQueue(page) {
 async function playPlaylist(page, query) {
   if (!(await performSearch(page, query))) return false;
 
-  // Playlist-Eintrag bevorzugt nach Titel, sonst ersten Playlist-Treffer.
-  let entry = page
-    .locator('#results-panel a[href*="/playlist/"]')
-    .filter({ hasText: query })
-    .first();
+  // Passenden Treffer waehlen: Titel-Match bevorzugt, Playlist ODER Spiel/Album
+  // ("Mario Kart World" ist z. B. ein Spiel, keine Playlist).
+  const playlistSel = '#results-panel a[href*="/playlist/"]';
+  const gameSel = '#results-panel a[href*="/game/"]';
+
+  let entry = page.locator(playlistSel).filter({ hasText: query }).first();
   if ((await entry.count()) === 0) {
-    entry = page.locator('#results-panel a[href*="/playlist/"]').first();
+    entry = page.locator(gameSel).filter({ hasText: query }).first();
+  }
+  if ((await entry.count()) === 0) {
+    // Kein Titel-Match -> erster Playlist-Treffer, sonst erstes Spiel/Album.
+    entry = page.locator(playlistSel).first();
+    if ((await entry.count()) === 0) {
+      entry = page.locator(gameSel).first();
+    }
   }
   try {
     await entry.waitFor({ state: "visible", timeout: 5000 });
   } catch {
-    console.warn(`[browser] Playlist "${query}" nicht gefunden.`);
+    console.warn(`[browser] Keine passende Playlist/kein Spiel fuer "${query}".`);
     return false;
   }
   const rawTitle = await entry.innerText().catch(() => query);
   const title = (rawTitle.split("\n")[0] || query).trim();
   await entry.click();
 
-  // Auf die Playlist-Seite warten (URL wechselt zu /playlist/...), dann den
-  // grossen "Abspielen"-Button klicken. Pi ist langsam -> grosszuegige Timeouts.
-  await page.waitForURL(/\/playlist\//, { timeout: 8000 }).catch(() => {});
+  // Auf die Detailseite warten (Playlist ODER Spiel/Album), dann den grossen
+  // "Abspielen"-Button klicken. Pi ist langsam -> grosszuegige Timeouts.
+  await page.waitForURL(/\/(playlist|game)\//, { timeout: 8000 }).catch(() => {});
 
+  // WICHTIG: Es gibt mehrere "Abspielen"-Buttons (gleiche Klasse). Der richtige
+  // sitzt in der HAUPTSPALTE. Wir grenzen darauf ein (main-Landmark), mit
+  // seitenweitem Fallback, falls kein <main> existiert.
+  const main = page.locator('main, [role="main"]').first();
   const strategies = [
+    () => main.getByRole("button", { name: /abspielen/i }).first(),
+    () => main.locator('button:has-text("Abspielen")').first(),
+    () => main.locator('button:has(svg path[d^="M6 3v18"])').first(),
+    // Fallbacks (kein <main> gefunden) – seitenweit:
     () => page.getByRole("button", { name: /abspielen/i }).first(),
     () => page.locator('button:has-text("Abspielen")').first(),
-    () => page.locator('button:has(svg path[d^="M6 3v18"])').first(), // Play-Dreieck
   ];
   for (const getBtn of strategies) {
     try {

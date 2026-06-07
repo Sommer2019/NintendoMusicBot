@@ -30,6 +30,8 @@ const {
   MessageFlags,
   EmbedBuilder,
   ActivityType,
+  StringSelectMenuBuilder,
+  ActionRowBuilder,
 } = require("discord.js");
 const {
   joinVoiceChannel,
@@ -83,6 +85,9 @@ const defaultPlaylist =
   browserCfg.defaultPlaylist || "Das Beste von Nintendo Music";
 let browserHandle = null;
 let browserStarting = null;
+
+// Offene Such-Auswahlen (Mehrfachtreffer): selId -> { query }. Mit Ablauf.
+const pendingSelections = new Map();
 
 // Startet den Browser einmalig (Singleton) und gibt das Handle zurueck.
 async function ensureBrowser() {
@@ -614,17 +619,22 @@ const commands = [
     ),
   new SlashCommandBuilder()
     .setName("queue")
-    .setDescription("Titel als Naechstes einreihen oder Warteschlange leeren")
-    .addSubcommand((s) =>
-      s
-        .setName("add")
-        .setDescription("Titel suchen und als Naechstes einreihen")
-        .addStringOption((o) =>
-          o.setName("name").setDescription("Titel oder Suchbegriff").setRequired(true)
+    .setDescription("Warteschlange verwalten: einreihen oder leeren")
+    .addStringOption((o) =>
+      o
+        .setName("aktion")
+        .setDescription("Was tun?")
+        .setRequired(true)
+        .addChoices(
+          { name: "Einreihen", value: "add" },
+          { name: "Leeren", value: "clear" }
         )
     )
-    .addSubcommand((s) =>
-      s.setName("clear").setDescription("Warteschlange leeren")
+    .addStringOption((o) =>
+      o
+        .setName("name")
+        .setDescription("Titel/Suchbegriff (nur bei Einreihen)")
+        .setRequired(false)
     ),
   new SlashCommandBuilder()
     .setName("playlist")
@@ -722,6 +732,40 @@ client.once(Events.ClientReady, async (c) => {
 });
 
 client.on(Events.InteractionCreate, async (interaction) => {
+  // Auswahlmenue bei Mehrfachtreffern (aus /track bzw. /title).
+  if (
+    interaction.isStringSelectMenu() &&
+    interaction.customId.startsWith("trksel:")
+  ) {
+    await interaction.deferUpdate();
+    const selId = interaction.customId.slice("trksel:".length);
+    const pending = pendingSelections.get(selId);
+    const h = browserHandle;
+    if (!pending || !h) {
+      return interaction.editReply({
+        content: "Auswahl abgelaufen – bitte neu suchen.",
+        components: [],
+      });
+    }
+    pendingSelections.delete(selId);
+    const index = parseInt(interaction.values[0], 10) || 0;
+    try {
+      const info = await h.playResultIndex(pending.query, index);
+      startNowPlaying();
+      return interaction.editReply({
+        content: null,
+        embeds: info ? [trackEmbed("🔎 Spielt jetzt", info)] : [],
+        components: [],
+      });
+    } catch (err) {
+      console.error("[select] fehlgeschlagen:", err);
+      return interaction.editReply({
+        content: "Konnte den Titel nicht abspielen.",
+        components: [],
+      });
+    }
+  }
+
   if (!interaction.isChatInputCommand()) return;
   if (!interaction.inGuild()) {
     return interaction.reply({
@@ -870,19 +914,44 @@ client.on(Events.InteractionCreate, async (interaction) => {
         case "track":
         case "title": {
           const q = interaction.options.getString("name", true);
-          const res = await h.search(q);
-          if (!res) {
+          const results = await h.searchResults(q, 5);
+          if (!results || results.length === 0) {
             return interaction.editReply(
               `Kein abspielbarer Titel fuer **${q}** gefunden.`
             );
           }
+          // Genau ein Treffer -> direkt abspielen.
+          if (results.length === 1) {
+            const info = await h.playResultIndex(q, 0);
+            return interaction.editReply({
+              embeds: [trackEmbed("🔎 Spielt jetzt", info || results[0])],
+            });
+          }
+          // Mehrere Treffer -> Auswahlmenue.
+          const selId = `${Date.now().toString(36)}${Math.random()
+            .toString(36)
+            .slice(2, 7)}`;
+          pendingSelections.set(selId, { query: q });
+          setTimeout(() => pendingSelections.delete(selId), 5 * 60_000);
+          const menu = new StringSelectMenuBuilder()
+            .setCustomId(`trksel:${selId}`)
+            .setPlaceholder("Welchen Titel abspielen?")
+            .addOptions(
+              results.slice(0, 5).map((r, i) => ({
+                label: (r.title || `Treffer ${i + 1}`).slice(0, 100),
+                description: (r.game || "").slice(0, 100) || undefined,
+                value: String(i),
+              }))
+            );
+          const row = new ActionRowBuilder().addComponents(menu);
           return interaction.editReply({
-            embeds: [trackEmbed("🔎 Spielt jetzt", res)],
+            content: `🔎 Mehrere Treffer fuer **${q}** – waehle aus:`,
+            components: [row],
           });
         }
         case "queue": {
-          const sub = interaction.options.getSubcommand();
-          if (sub === "clear") {
+          const aktion = interaction.options.getString("aktion", true);
+          if (aktion === "clear") {
             const ok = await h.clearQueue();
             return interaction.editReply(
               ok
@@ -890,7 +959,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 : "Warteschlange konnte nicht geleert werden (Button/Menü nicht gefunden)."
             );
           }
-          const q = interaction.options.getString("name", true);
+          // aktion === "add"
+          const q = interaction.options.getString("name");
+          if (!q) {
+            return interaction.editReply(
+              "Fuer **Einreihen** brauche ich einen Titel/Suchbegriff (Option `name`)."
+            );
+          }
           const res = await h.queueNext(q);
           if (!res) {
             return interaction.editReply(
