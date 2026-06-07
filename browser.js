@@ -37,6 +37,7 @@ try {
 }
 
 const IS_WIN = process.platform === "win32";
+let xvfbProcess = null;
 
 const LINUX_CHROMIUM_CANDIDATES = [
   process.env.CHROMIUM_PATH,
@@ -99,10 +100,12 @@ async function startNintendoMusic(options = {}) {
     args,
   };
 
+  let displaySetup = { display: "", startedXvfb: false };
   if (IS_WIN) {
     // Windows: echtes Google Chrome -> Widevine-CDM vorhanden.
     launchOpts.channel = "chrome";
   } else {
+    displaySetup = await ensureLinuxDisplay();
     // Linux/Pi: System-Chromium MIT Widevine (Playwright-Bundle hat keins).
     const chromiumPath = resolveLinuxChromiumExecutable(cfg.executablePath);
     if (chromiumPath) {
@@ -120,11 +123,24 @@ async function startNintendoMusic(options = {}) {
     }
     // Chromium-Audio direkt in den PulseAudio null-sink leiten (kein Routing-
     // Nachfassen noetig wie unter Windows).
-    launchOpts.env = { ...process.env, PULSE_SINK: cfg.audioSink };
+    launchOpts.env = {
+      ...process.env,
+      ...(displaySetup.display ? { DISPLAY: displaySetup.display } : {}),
+      PULSE_SINK: cfg.audioSink,
+    };
   }
 
-  const ctx = await chromium.launchPersistentContext(cfg.userDataDir, launchOpts);
+  if (displaySetup.startedXvfb) {
+    console.log(`[browser] Kein DISPLAY gefunden – nutze Xvfb ${displaySetup.display}.`);
+  }
 
+  let ctx;
+  try {
+    ctx = await chromium.launchPersistentContext(cfg.userDataDir, launchOpts);
+  } catch (err) {
+    await stopXvfb();
+    throw err;
+  }
   const page = ctx.pages()[0] ?? (await ctx.newPage());
   console.log("[browser] Oeffne", cfg.url);
   await page.goto(cfg.url, { waitUntil: "domcontentloaded" });
@@ -159,6 +175,7 @@ async function startNintendoMusic(options = {}) {
     } catch (err) {
       console.error("[browser] Fehler beim Schliessen:", err.message);
     }
+    await stopXvfb();
   };
 
   // Lautstaerke 0..1 merken (Media-Element-Volume, unabhaengig vom System).
@@ -202,6 +219,61 @@ async function startNintendoMusic(options = {}) {
     /** Aktuell laufenden Titel auslesen: { title, game, image } | null. */
     nowPlaying: () => getNowPlaying(page),
   };
+}
+
+async function ensureLinuxDisplay() {
+  if (IS_WIN || process.env.DISPLAY) {
+    return { display: process.env.DISPLAY ?? "", startedXvfb: false };
+  }
+
+  const display = process.env.DCNM_XVFB_DISPLAY || ":99";
+  const socketPath = `/tmp/.X11-unix/X${display.replace(/^:/, "")}`;
+
+  if (xvfbProcess) {
+    return { display, startedXvfb: true };
+  }
+
+  xvfbProcess = spawn("Xvfb", [display, "-screen", "0", "1280x720x24", "-ac", "-nolisten", "tcp"], {
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+
+  xvfbProcess.stderr?.on("data", (d) => {
+    const msg = d.toString().trim();
+    if (msg) console.warn(`[browser] Xvfb: ${msg}`);
+  });
+
+  xvfbProcess.on("error", (err) => {
+    console.error("[browser] Xvfb konnte nicht gestartet werden:", err.message);
+  });
+
+  await waitForFile(socketPath, 3000).catch(async () => {
+    await stopXvfb();
+    throw new Error(
+      "Xvfb wurde nicht rechtzeitig bereit. Stelle sicher, dass das Paket 'xvfb' installiert ist."
+    );
+  });
+
+  return { display, startedXvfb: true };
+}
+
+async function stopXvfb() {
+  if (!xvfbProcess) return;
+  const proc = xvfbProcess;
+  xvfbProcess = null;
+  try {
+    proc.kill();
+  } catch {
+    // ignorieren
+  }
+}
+
+async function waitForFile(filePath, timeoutMs) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (fs.existsSync(filePath)) return true;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error(`Timed out waiting for ${filePath}`);
 }
 
 /**

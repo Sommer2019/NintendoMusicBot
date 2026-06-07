@@ -92,6 +92,11 @@ npm run browser:login
 → Bei Nintendo Music einloggen, kurz abspielen (DRM prüfen!). Das Profil wird in
 `chrome-profile/` gespeichert. Fenster mit STRG+C schließen.
 
+> Hinweis: Falls kein X-Server läuft, startet der Code automatisch eine
+> temporäre Xvfb-Session. Das verhindert den Startfehler, ist aber kein echter
+> sichtbarer Desktop. Für einen wirklich sichtbaren Login brauchst du weiterhin
+> HDMI/VNC oder ein anderes `DISPLAY`.
+
 ## 5. Headless-Betrieb testen
 
 Der Bot startet Chromium „headed" in einen **virtuellen Bildschirm** (Xvfb):
