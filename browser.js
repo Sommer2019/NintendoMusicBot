@@ -145,6 +145,9 @@ async function startNintendoMusic(options = {}) {
   console.log("[browser] Oeffne", cfg.url);
   await page.goto(cfg.url, { waitUntil: "domcontentloaded" });
 
+  // Schliesst ggf. offene Modals/Dialoge (z.B. "Schließen"-Button auf Startseite).
+  await tryCloseModals(page);
+
   // Wiedergabe starten (best effort – Selektor ggf. an echte UI anpassen).
   await tryStartPlayback(page);
 
@@ -277,6 +280,59 @@ async function waitForFile(filePath, timeoutMs) {
 }
 
 /**
+ * Sucht nach Close-Buttons (Schließen, Dismiss, etc.) und klickt sie,
+ * damit ggf. verdeckte UI-Elemente sichtbar werden.
+ */
+async function tryCloseModals(page) {
+  const result = await page.evaluate(() => {
+    const isVisible = (el) => {
+      const style = window.getComputedStyle(el);
+      const rect = el.getBoundingClientRect();
+      return (
+        style.visibility !== "hidden" &&
+        style.display !== "none" &&
+        style.opacity !== "0" &&
+        rect.width > 0 &&
+        rect.height > 0
+      );
+    };
+
+    const norm = (s) => (s || "").toLowerCase().trim();
+
+    // Suche nach Close-Buttons anhand Text / aria-label / title.
+    const candidates = Array.from(
+      document.querySelectorAll('button, [role="button"], [role="dialog"] button')
+    ).filter((el) => {
+      const label = norm(el.getAttribute("aria-label"));
+      const title = norm(el.getAttribute("title"));
+      const text = norm(el.textContent);
+      const match = /schliess|close|dismiss|zurück|back|exit/.test(
+        label || title || text
+      );
+      return match && isVisible(el);
+    });
+
+    const closed = [];
+    for (const el of candidates) {
+      try {
+        el.scrollIntoView({ block: "center", inline: "center" });
+        el.click();
+        closed.push(
+          `${el.tagName.toLowerCase()}[aria-label="${el.getAttribute("aria-label") || ""}"]`
+        );
+      } catch {
+        // naechster
+      }
+    }
+    return closed;
+  });
+
+  if (result.length > 0) {
+    console.log(`[browser] Modal(s) geschlossen: ${result.join(", ")}`);
+  }
+}
+
+/**
  * Versucht ueber mehrere Strategien, einen Play-Button zu finden und zu
  * klicken. Wirft NICHT – meldet nur, falls nichts gefunden wurde (die echte
  * UI/Selektoren musst du am DOM verifizieren).
@@ -310,6 +366,14 @@ async function tryStartPlayback(page) {
 
   for (const loc of strategies) {
     if (await clickFirstVisibleMatch(loc)) {
+      // Kleine Verzögerung, damit die Wiedergabe bzw. die Audio-Session
+      // Zeit hat, sich zu initialisieren (verhindert, dass direkte
+      // Folgeaktionen die noch nicht vorhandene Session verfehlen).
+      try {
+        await page.waitForTimeout(800);
+      } catch {
+        // ignore
+      }
       console.log("[browser] Wiedergabe gestartet.");
       return true;
     }
