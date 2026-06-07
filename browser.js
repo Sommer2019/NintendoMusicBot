@@ -146,6 +146,11 @@ async function startNintendoMusic(options = {}) {
   await page.goto(cfg.url, { waitUntil: "domcontentloaded" });
 
   // Schliesst ggf. offene Modals/Dialoge (z.B. "Schließen"-Button auf Startseite).
+  try {
+    await page.waitForTimeout(15000);
+  } catch {
+    // ignore
+  }
   await tryCloseModals(page);
 
   // Wiedergabe starten (best effort – Selektor ggf. an echte UI anpassen).
@@ -302,13 +307,12 @@ async function tryCloseModals(page) {
     // Suche nach Close-Buttons anhand Text / aria-label / title.
     const candidates = Array.from(
       document.querySelectorAll('button, [role="button"], [role="dialog"] button')
-    ).filter(async (el) => {
+    ).filter((el) => {
       const label = norm(el.getAttribute("aria-label"));
       const title = norm(el.getAttribute("title"));
       const text = norm(el.textContent);
-      await page.waitForTimeout(15000);
       const match = /schließ|schliessen|schließen|schliess|close|dismiss|zurück|back|exit/.test(
-          label || title || text
+        label || title || text
       );
       return match && isVisible(el);
     });
