@@ -76,6 +76,8 @@ const activeFfmpeg = new Map();
 // Per config.json: "browser": { "enabled": true, "visible": false, ... }
 const browserCfg = config.browser ?? {};
 const browserEnabled = browserCfg.enabled !== false;
+// Optionale Default-Playlist, die beim 24/7-Auto-Join nach (Neu-)Start laeuft.
+const defaultPlaylist = browserCfg.defaultPlaylist || "";
 let browserHandle = null;
 let browserStarting = null;
 
@@ -282,6 +284,138 @@ function stopCapture(guildId) {
   }
 }
 
+// --- 24/7-Dauerbetrieb -----------------------------------------------------
+// Persistenter Channel: per /stay gesetzt, beim Start automatisch betreten,
+// bei Trennung automatisch wieder verbunden. Gespeichert in autojoin.json.
+const autojoinPath = path.join(__dirname, "autojoin.json");
+const persistentGuilds = new Set(); // guildIds, die 24/7 bleiben sollen
+
+function loadAutojoin() {
+  try {
+    return JSON.parse(fs.readFileSync(autojoinPath, "utf8"));
+  } catch {
+    return null;
+  }
+}
+function saveAutojoin(data) {
+  try {
+    fs.writeFileSync(autojoinPath, JSON.stringify(data, null, 2));
+  } catch (err) {
+    console.error("[autojoin] Speichern fehlgeschlagen:", err.message);
+  }
+}
+function clearAutojoin(guildId) {
+  persistentGuilds.delete(guildId);
+  const aj = loadAutojoin();
+  if (aj && aj.guildId === guildId) {
+    try {
+      fs.unlinkSync(autojoinPath);
+    } catch {
+      /* egal */
+    }
+  }
+}
+
+// Gemeinsame Join-/Stream-Logik fuer /join, /stay und Auto-Join.
+// Wirft bei Fehler (z. B. Browser-Start) -> Aufrufer faengt.
+async function joinAndStream(guild, voiceChannel, textChannel) {
+  const guildId = guild.id;
+  if (browserEnabled) await ensureBrowser();
+
+  const connection = joinVoiceChannel({
+    channelId: voiceChannel.id,
+    guildId,
+    adapterCreator: guild.voiceAdapterCreator,
+    selfDeaf: false,
+  });
+  await entersState(connection, VoiceConnectionStatus.Ready, 20_000);
+
+  const player = createAudioPlayer({
+    behaviors: { noSubscriber: NoSubscriberBehavior.Play },
+  });
+  player.on(AudioPlayerStatus.Idle, () => {
+    if (getVoiceConnection(guildId)) {
+      player.play(createCaptureResource(guildId));
+    }
+  });
+  player.on("error", (err) => console.error("[player]", err.message));
+  connection.subscribe(player);
+  player.play(createCaptureResource(guildId));
+
+  // Channel fuer die "Spielt gerade"-Karte merken – aber NICHT starten.
+  // Das Tracking beginnt erst, wenn wirklich etwas abgespielt wird (/play, /track).
+  if (browserEnabled && textChannel) npChannels.set(guildId, textChannel);
+
+  connection.on(VoiceConnectionStatus.Disconnected, async () => {
+    if (persistentGuilds.has(guildId)) {
+      // 24/7: erst auf automatischen Reconnect warten, sonst neu beitreten.
+      try {
+        await Promise.race([
+          entersState(connection, VoiceConnectionStatus.Signalling, 5_000),
+          entersState(connection, VoiceConnectionStatus.Connecting, 5_000),
+        ]);
+        // verbindet sich selbst neu -> nichts tun
+      } catch {
+        try {
+          connection.destroy();
+        } catch {
+          /* egal */
+        }
+        stopCapture(guildId);
+        setTimeout(() => rejoinPersistent(guildId), 5_000);
+      }
+    } else {
+      stopCapture(guildId);
+      clearNowPlayingFor(guildId);
+      stopBrowserIfIdle();
+    }
+  });
+
+  return voiceChannel.name;
+}
+
+// Persistenten Channel (erneut) betreten – fuer Auto-Join beim Start und Rejoin.
+// playDefault=true (nur beim Start): danach die Default-Playlist anspielen.
+async function rejoinPersistent(guildId, playDefault = false) {
+  const aj = loadAutojoin();
+  if (!aj || aj.guildId !== guildId) return;
+  try {
+    const guild = await client.guilds.fetch(aj.guildId);
+    const voiceChannel = await guild.channels.fetch(aj.channelId);
+    const textChannel = aj.textChannelId
+      ? await guild.channels.fetch(aj.textChannelId).catch(() => null)
+      : null;
+    await joinAndStream(guild, voiceChannel, textChannel);
+    console.log(`[autojoin] Verbunden mit "${voiceChannel.name}".`);
+
+    // Nach dem Start (nicht bei Reconnects) die Default-Playlist anspielen,
+    // damit nach einem Neustart sofort Musik laeuft.
+    if (playDefault && browserEnabled && defaultPlaylist && browserHandle) {
+      startNowPlaying();
+      try {
+        await browserHandle.playPlaylist(defaultPlaylist);
+        console.log(`[autojoin] Default-Playlist gestartet: "${defaultPlaylist}".`);
+      } catch (err) {
+        console.error("[autojoin] Default-Playlist fehlgeschlagen:", err.message);
+      }
+    }
+  } catch (err) {
+    console.error(
+      "[autojoin] Rejoin fehlgeschlagen, neuer Versuch in 30s:",
+      err.message
+    );
+    setTimeout(() => rejoinPersistent(guildId, playDefault), 30_000);
+  }
+}
+
+// Beim Start den gespeicherten 24/7-Channel automatisch betreten + Default-Playlist.
+async function autojoinOnStart() {
+  const aj = loadAutojoin();
+  if (!aj) return;
+  persistentGuilds.add(aj.guildId);
+  await rejoinPersistent(aj.guildId, true);
+}
+
 // --- Discord-Client --------------------------------------------------------
 const client = new Client({
   intents: [
@@ -298,6 +432,9 @@ const commands = [
   new SlashCommandBuilder()
     .setName("leave")
     .setDescription("Bot verlaesst den Voice-Channel und stoppt den Stream"),
+  new SlashCommandBuilder()
+    .setName("stay")
+    .setDescription("Bot bleibt dauerhaft (24/7) in deinem Voice-Channel"),
   new SlashCommandBuilder()
     .setName("status")
     .setDescription("Zeigt, ob gerade gestreamt wird"),
@@ -346,6 +483,12 @@ const commands = [
     .setDescription("Track suchen und als Naechstes einreihen")
     .addStringOption((o) =>
       o.setName("name").setDescription("Suchbegriff").setRequired(true)
+    ),
+  new SlashCommandBuilder()
+    .setName("playlist")
+    .setDescription("Playlist suchen und abspielen")
+    .addStringOption((o) =>
+      o.setName("name").setDescription("Playlist-Name").setRequired(true)
     ),
 ].map((c) => c.toJSON());
 
@@ -397,6 +540,10 @@ client.once(Events.ClientReady, async (c) => {
   } catch (err) {
     console.error("Konnte Slash-Commands nicht registrieren:", err);
   }
+  // Falls ein 24/7-Channel gesetzt ist (/stay), automatisch betreten.
+  autojoinOnStart().catch((err) =>
+    console.error("[autojoin] Start-Join fehlgeschlagen:", err.message)
+  );
   console.log("Bereit. Tipp: /join in einem Voice-Channel ausfuehren.");
 });
 
@@ -429,6 +576,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     "volumedown",
     "track",
     "queue",
+    "playlist",
   ]);
   if (playerCommands.has(interaction.commandName)) {
     if (!browserEnabled) {
@@ -447,6 +595,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
     // Sofort deferren: auf dem Pi koennen die page.evaluate-Aufrufe laenger als
     // die 3-Sekunden-Frist von Discord dauern ("Anwendung reagiert nicht").
     await interaction.deferReply();
+    // "Spielt gerade"-Tracking erst hier starten (nicht schon bei /join). Die
+    // Karte erscheint ohnehin nur, sobald wirklich ein Track laeuft.
+    startNowPlaying();
     try {
       switch (interaction.commandName) {
         case "play": {
@@ -532,6 +683,15 @@ client.on(Events.InteractionCreate, async (interaction) => {
             embeds: [trackEmbed("➕ Als Nächstes", res)],
           });
         }
+        case "playlist": {
+          const q = interaction.options.getString("name", true);
+          const title = await h.playPlaylist(q);
+          return interaction.editReply(
+            title
+              ? `📃 Spiele Playlist **${title}**.`
+              : `Playlist **${q}** nicht gefunden oder nicht abspielbar.`
+          );
+        }
       }
     } catch (err) {
       console.error("[player] Befehl fehlgeschlagen:", err);
@@ -544,6 +704,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
   if (interaction.commandName === "leave") {
     const connection = getVoiceConnection(guildId);
+    clearAutojoin(guildId); // 24/7-Modus beenden, sonst Auto-Rejoin
     stopCapture(guildId);
     clearNowPlayingFor(guildId);
     stopBrowserIfIdle();
@@ -557,12 +718,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
     });
   }
 
-  if (interaction.commandName === "join") {
-    const member = interaction.member;
-    const voiceChannel = member?.voice?.channel;
+  if (interaction.commandName === "join" || interaction.commandName === "stay") {
+    const stay = interaction.commandName === "stay";
+    const voiceChannel = interaction.member?.voice?.channel;
     if (!voiceChannel) {
       return interaction.reply({
-        content: "Geh erst in einen Voice-Channel, dann /join.",
+        content: `Geh erst in einen Voice-Channel, dann /${interaction.commandName}.`,
         flags: MessageFlags.Ephemeral,
       });
     }
@@ -570,66 +731,38 @@ client.on(Events.InteractionCreate, async (interaction) => {
     await interaction.deferReply();
 
     try {
-      // Hintergrund-Browser starten (falls aktiviert), damit Audio anliegt.
-      if (browserEnabled) {
-        try {
-          await ensureBrowser();
-        } catch (err) {
-          console.error("[browser] Start fehlgeschlagen:", err);
-          return interaction.editReply(
-            "Konnte den Hintergrund-Browser nicht starten. Bist du bei " +
-              "Nintendo Music eingeloggt? Einmal `npm run browser:login` " +
-              "ausfuehren und einloggen. Details im Bot-Log."
-          );
-        }
+      if (stay) {
+        // 24/7 merken (auch fuer Auto-Join nach Neustart) BEVOR wir joinen,
+        // damit der Disconnect-Handler den Rejoin uebernimmt.
+        persistentGuilds.add(guildId);
+        saveAutojoin({
+          guildId,
+          channelId: voiceChannel.id,
+          textChannelId: interaction.channel?.id ?? null,
+        });
       }
 
-      const connection = joinVoiceChannel({
-        channelId: voiceChannel.id,
-        guildId,
-        adapterCreator: interaction.guild.voiceAdapterCreator,
-        selfDeaf: false,
-      });
-
-      await entersState(connection, VoiceConnectionStatus.Ready, 20_000);
-
-      const player = createAudioPlayer({
-        behaviors: { noSubscriber: NoSubscriberBehavior.Play },
-      });
-
-      player.on(AudioPlayerStatus.Idle, () => {
-        if (getVoiceConnection(guildId)) {
-          console.warn("Stream idle -> FFmpeg-Aufnahme wird neu gestartet.");
-          player.play(createCaptureResource(guildId));
-        }
-      });
-      player.on("error", (err) => console.error("[player]", err.message));
-
-      connection.subscribe(player);
-      player.play(createCaptureResource(guildId));
-
-      // Now-Playing-Tracking fuer diesen Channel starten.
-      if (browserEnabled) {
-        npChannels.set(guildId, interaction.channel);
-        startNowPlaying();
-        updateNowPlaying().catch(() => {});
-      }
-
-      connection.on(VoiceConnectionStatus.Disconnected, () => {
-        stopCapture(guildId);
-        clearNowPlayingFor(guildId);
-        stopBrowserIfIdle();
-      });
+      await joinAndStream(interaction.guild, voiceChannel, interaction.channel);
 
       await interaction.editReply(
-        `**${voiceChannel.name}** wurde beigetreten. 🎶`
+        stay
+          ? `📌 Bleibe jetzt **24/7** in **${voiceChannel.name}** (auch nach Neustart). 🎶`
+          : `**${voiceChannel.name}** wurde beigetreten. 🎶`
       );
     } catch (err) {
-      console.error("Join fehlgeschlagen:", err);
+      console.error(`${interaction.commandName} fehlgeschlagen:`, err);
+      if (stay) clearAutojoin(guildId);
       stopCapture(guildId);
       getVoiceConnection(guildId)?.destroy();
+      // Browser-Start-Fehler gesondert melden (haeufigste Ursache: kein Login).
+      const browserIssue = /playwright|chromium|widevine|executablePath/i.test(
+        err?.message || ""
+      );
       await interaction.editReply(
-        "Konnte nicht beitreten / streamen. Details stehen im Bot-Log."
+        browserIssue
+          ? "Konnte den Hintergrund-Browser nicht starten. Eingeloggt? " +
+              "Einmal `npm run browser:login`. Details im Bot-Log."
+          : "Konnte nicht beitreten / streamen. Details stehen im Bot-Log."
       );
     }
   }

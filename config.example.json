@@ -8,6 +8,7 @@
     "enabled": true,
     "visible": false,
     "executablePath": "",
-    "audioSink": "ntmusic"
+    "audioSink": "ntmusic",
+    "defaultPlaylist": "Das Beste von Nintendo Music"
   }
 }

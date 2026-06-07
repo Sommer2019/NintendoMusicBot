@@ -230,6 +230,9 @@ async function startNintendoMusic(options = {}) {
     /** Track suchen und als Naechstes einreihen. */
     queueNext: (query) => queueNext(page, query),
 
+    /** Playlist suchen und abspielen. */
+    playPlaylist: (query) => playPlaylist(page, query),
+
     /** Aktuell laufenden Titel auslesen: { title, game, image } | null. */
     nowPlaying: () => getNowPlaying(page),
   };
@@ -753,6 +756,46 @@ async function queueNext(page, query) {
     console.warn(`[browser] Queue "${query}" fehlgeschlagen:`, err.message);
     return false;
   }
+}
+
+/**
+ * Sucht eine Playlist und spielt sie ab:
+ *   1. Playlist-Treffer (<a href*="/playlist/">) anklicken -> Playlist-Seite
+ *   2. grossen "Abspielen"-Button klicken (Text stabil, class gehasht)
+ */
+async function playPlaylist(page, query) {
+  if (!(await performSearch(page, query))) return false;
+
+  // Playlist-Eintrag bevorzugt nach Titel, sonst ersten Playlist-Treffer.
+  let entry = page
+    .locator('#results-panel a[href*="/playlist/"]')
+    .filter({ hasText: query })
+    .first();
+  if ((await entry.count()) === 0) {
+    entry = page.locator('#results-panel a[href*="/playlist/"]').first();
+  }
+  try {
+    await entry.waitFor({ state: "visible", timeout: 5000 });
+  } catch {
+    console.warn(`[browser] Playlist "${query}" nicht gefunden.`);
+    return false;
+  }
+  const rawTitle = await entry.innerText().catch(() => query);
+  const title = (rawTitle.split("\n")[0] || query).trim();
+  await entry.click();
+
+  // Auf der Playlist-/Album-Seite den grossen "Abspielen"-Button klicken.
+  const playBtn = page.getByRole("button", { name: /^abspielen$/i }).first();
+  try {
+    await playBtn.waitFor({ state: "visible", timeout: 6000 });
+    await playBtn.click();
+  } catch {
+    console.warn('[browser] "Abspielen"-Button auf der Playlist nicht gefunden.');
+    return false;
+  }
+
+  console.log(`[browser] Playlist gestartet: "${title}".`);
+  return title;
 }
 
 /**
