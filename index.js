@@ -1,7 +1,12 @@
 const fs = require("node:fs");
 const path = require("node:path");
-const { startDiscordBot } = require("./bot");
 const { startNintendoMusic } = require("./browser");
+let startDiscordBot = null;
+try {
+  ({ startDiscordBot } = require("./bot"));
+} catch {
+  console.warn("[start] bot.js nicht gefunden – Discord-Bot wird übersprungen.");
+}
 
 function loadConfig() {
   try {
@@ -19,6 +24,9 @@ async function main() {
   let browserControls = null;
 
   if (cfg.token) {
+    if (!startDiscordBot) {
+      console.warn("[start] Kein Discord-Bot-Modul verfügbar. Überspringe Bot-Start.");
+    } else {
     console.log("[start] Starte Discord-Bot…");
     try {
       const bot = await startDiscordBot(
@@ -30,6 +38,7 @@ async function main() {
       }
     } catch (err) {
       console.error("[start] Discord-Bot konnte nicht gestartet werden:", err.message);
+    }
     }
   } else {
     console.warn("[start] Kein token in config.json – Discord-Bot wird nicht gestartet.");
