@@ -38,6 +38,22 @@ try {
 
 const IS_WIN = process.platform === "win32";
 
+const LINUX_CHROMIUM_CANDIDATES = [
+  process.env.CHROMIUM_PATH,
+  process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH,
+  "/usr/bin/chromium-browser",
+  "/usr/bin/chromium",
+  "/snap/bin/chromium",
+];
+
+function resolveLinuxChromiumExecutable(explicitPath = "") {
+  const candidates = [explicitPath, ...LINUX_CHROMIUM_CANDIDATES].filter(Boolean);
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  return "";
+}
+
 const DEFAULTS = {
   // Profilordner, in dem der Nintendo-Login persistiert wird.
   userDataDir: path.join(__dirname, "chrome-profile"),
@@ -88,13 +104,18 @@ async function startNintendoMusic(options = {}) {
     launchOpts.channel = "chrome";
   } else {
     // Linux/Pi: System-Chromium MIT Widevine (Playwright-Bundle hat keins).
-    if (cfg.executablePath) {
-      launchOpts.executablePath = cfg.executablePath;
+    const chromiumPath = resolveLinuxChromiumExecutable(cfg.executablePath);
+    if (chromiumPath) {
+      launchOpts.executablePath = chromiumPath;
+      if (!cfg.executablePath) {
+        console.log(`[browser] Nutze System-Chromium: ${chromiumPath}`);
+      }
     } else {
       console.warn(
-        "[browser] Kein executablePath gesetzt – Playwrights Chromium hat KEIN\n" +
-          "          Widevine. Auf dem Pi browser.executablePath auf\n" +
-          "          /usr/bin/chromium-browser (o. ä.) setzen, sonst DRM-Fehler."
+        "[browser] Kein System-Chromium gefunden. Playwrights Bundle-Chromium\n" +
+          "          hat KEIN Widevine. Setze browser.executablePath in config.json\n" +
+          "          auf ein vorhandenes Chromium, z. B. /usr/bin/chromium-browser\n" +
+          "          oder /usr/bin/chromium."
       );
     }
     // Chromium-Audio direkt in den PulseAudio null-sink leiten (kein Routing-
@@ -143,7 +164,7 @@ async function startNintendoMusic(options = {}) {
   // Lautstaerke 0..1 merken (Media-Element-Volume, unabhaengig vom System).
   let volume = 1;
 
-  const controls = {
+  return {
     ctx,
     page,
     stop,
@@ -181,8 +202,6 @@ async function startNintendoMusic(options = {}) {
     /** Aktuell laufenden Titel auslesen: { title, game, image } | null. */
     nowPlaying: () => getNowPlaying(page),
   };
-
-  return controls;
 }
 
 /**

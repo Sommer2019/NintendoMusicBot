@@ -25,7 +25,7 @@ chromium-browser --version
 - **DRM-Fehler / nichts spielt** → Widevine fehlt auf deinem Image. Dann stoppen
   und mir Bescheid geben — ohne Widevine bringt der Rest nichts. ❌
 
-Pfad zum Chromium merken (für `config.json`):
+Pfad zum Chromium merken (nur falls die Auto-Erkennung nicht greift):
 ```bash
 which chromium-browser || which chromium
 ```
@@ -52,6 +52,8 @@ npm i playwright          # KEIN "npx playwright install chrome" (gibt es nicht 
 ```
 
 Wir nutzen das **System-Chromium** (hat Widevine), nicht Playwrights Bundle.
+`browser.executablePath` kann leer bleiben, wenn Chromium in einem der üblichen
+Pfade liegt (`/usr/bin/chromium-browser`, `/usr/bin/chromium`, `/snap/bin/chromium`).
 
 ## 3. config.json anlegen
 
@@ -75,7 +77,8 @@ Auf dem Pi wichtig:
 }
 ```
 - `ffmpegPath: "ffmpeg"` → System-FFmpeg (kann PulseAudio; `ffmpeg-static` oft nicht).
-- `executablePath` → Pfad aus Schritt 0.
+- `executablePath` → optional; nur setzen, wenn Chromium an einem anderen Pfad
+  liegt als die üblichen Standardpfade.
 - `audioDevice` wird auf Linux **nicht** gebraucht.
 
 ## 4. Einmalig bei Nintendo einloggen (mit Bild)
