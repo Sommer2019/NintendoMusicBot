@@ -209,56 +209,37 @@ async function startNintendoMusic(options = {}) {
  * klicken. Wirft NICHT – meldet nur, falls nichts gefunden wurde (die echte
  * UI/Selektoren musst du am DOM verifizieren).
  */
-async function tryStartPlayback(page) {
-  const strategies = [
-    () => page.locator('button[aria-label="Abspielen"]').first(),
-    () => page.getByRole("button", { name: /^abspielen$/i }).first(),
-    () => page.getByRole("button", { name: /abspielen|wiedergabe|play/i }).first(),
-    () => page.getByText(/^abspielen$/i).first(),
-    () => page.locator('button[aria-label*="abspielen" i]').first(),
-    () => page.locator('button[aria-label*="play" i]').first(),
-    () => page.locator('[data-testid*="play" i]').first(),
-    () => page.locator('button:has(svg[class*="play" i])').first(),
-  ];
-
-  const waitForPlayButton = async () => {
-    const candidates = [
-      page.locator('button[aria-label="Abspielen"]').first(),
-      page.getByRole("button", { name: /^abspielen$/i }).first(),
-      page.locator('button[aria-label*="abspielen" i]').first(),
-    ];
-
-    for (const loc of candidates) {
-      try {
-        await loc.waitFor({ state: "visible", timeout: 15000 });
-        return loc;
-      } catch {
-        // naechster Kandidat
-      }
-    }
-    return null;
-  };
-
-  const preferred = await waitForPlayButton();
-  if (preferred) {
+async function clickFirstVisibleMatch(locator, timeout = 1200) {
+  const count = await locator.count().catch(() => 0);
+  for (let i = 0; i < count; i++) {
+    const loc = locator.nth(i);
     try {
-      await preferred.click();
-      console.log('[browser] Wiedergabe gestartet via "Abspielen".');
+      await loc.waitFor({ state: "visible", timeout });
+      await loc.click();
       return true;
     } catch {
-      // Fallback auf die weiteren Strategien unten
+      // naechster Treffer
     }
   }
+  return false;
+}
 
-  for (const getLocator of strategies) {
-    try {
-      const loc = getLocator();
-      await loc.waitFor({ state: "visible", timeout: 4000 });
-      await loc.click();
+async function tryStartPlayback(page) {
+  const strategies = [
+    page.locator('button[aria-label="Abspielen"]'),
+    page.getByRole("button", { name: /^abspielen$/i }),
+    page.getByRole("button", { name: /abspielen|wiedergabe|play/i }),
+    page.getByText(/^abspielen$/i),
+    page.locator('button[aria-label*="abspielen" i]'),
+    page.locator('button[aria-label*="play" i]'),
+    page.locator('[data-testid*="play" i]'),
+    page.locator('button:has(svg[class*="play" i])'),
+  ];
+
+  for (const loc of strategies) {
+    if (await clickFirstVisibleMatch(loc)) {
       console.log("[browser] Wiedergabe gestartet.");
       return true;
-    } catch {
-      // naechste Strategie probieren
     }
   }
 
