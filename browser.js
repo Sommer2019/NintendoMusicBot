@@ -306,7 +306,7 @@ async function tryCloseModals(page) {
       const label = norm(el.getAttribute("aria-label"));
       const title = norm(el.getAttribute("title"));
       const text = norm(el.textContent);
-      const match = /schliess|close|dismiss|zurück|back|exit/.test(
+      const match = /schließ|schliessen|schließen|schliess|close|dismiss|zurück|back|exit/.test(
         label || title || text
       );
       return match && isVisible(el);
