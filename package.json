@@ -1,9 +1,10 @@
 {
-  "name": "DCNintendoMusic",
+  "name": "dcnintendomusic",
   "version": "1.0.0",
   "description": "",
   "main": "index.js",
   "scripts": {
+    "start": "node index.js",
     "browser:login": "node test-browser.js --visible",
     "devices": "node list-devices.js",
     "inspect": "node inspect-player.js",
