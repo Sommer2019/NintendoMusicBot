@@ -800,18 +800,32 @@ async function playPlaylist(page, query) {
   const title = (rawTitle.split("\n")[0] || query).trim();
   await entry.click();
 
-  // Auf der Playlist-/Album-Seite den grossen "Abspielen"-Button klicken.
-  const playBtn = page.getByRole("button", { name: /^abspielen$/i }).first();
-  try {
-    await playBtn.waitFor({ state: "visible", timeout: 6000 });
-    await playBtn.click();
-  } catch {
-    console.warn('[browser] "Abspielen"-Button auf der Playlist nicht gefunden.');
-    return false;
+  // Auf die Playlist-Seite warten (URL wechselt zu /playlist/...), dann den
+  // grossen "Abspielen"-Button klicken. Pi ist langsam -> grosszuegige Timeouts.
+  await page.waitForURL(/\/playlist\//, { timeout: 8000 }).catch(() => {});
+
+  const strategies = [
+    () => page.getByRole("button", { name: /abspielen/i }).first(),
+    () => page.locator('button:has-text("Abspielen")').first(),
+    () => page.locator('button:has(svg path[d^="M6 3v18"])').first(), // Play-Dreieck
+  ];
+  for (const getBtn of strategies) {
+    try {
+      const btn = getBtn();
+      await btn.waitFor({ state: "visible", timeout: 10000 });
+      await btn.click();
+      console.log(`[browser] Playlist gestartet: "${title}".`);
+      return title;
+    } catch {
+      // naechste Strategie
+    }
   }
 
-  console.log(`[browser] Playlist gestartet: "${title}".`);
-  return title;
+  console.warn(
+    '[browser] "Abspielen"-Button auf der Playlist nicht gefunden. Buttons:'
+  );
+  await dumpButtons(page);
+  return false;
 }
 
 /**

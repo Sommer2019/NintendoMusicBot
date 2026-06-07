@@ -76,8 +76,10 @@ const activeFfmpeg = new Map();
 // Per config.json: "browser": { "enabled": true, "visible": false, ... }
 const browserCfg = config.browser ?? {};
 const browserEnabled = browserCfg.enabled !== false;
-// Optionale Default-Playlist, die beim 24/7-Auto-Join nach (Neu-)Start laeuft.
-const defaultPlaylist = browserCfg.defaultPlaylist || "";
+// Default-Playlist, die beim 24/7-Auto-Join nach (Neu-)Start laeuft.
+// Per config.browser.defaultPlaylist ueberschreibbar, sonst fester Standard.
+const defaultPlaylist =
+  browserCfg.defaultPlaylist || "Das Beste von Nintendo Music";
 let browserHandle = null;
 let browserStarting = null;
 
