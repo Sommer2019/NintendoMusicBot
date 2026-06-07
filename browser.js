@@ -211,6 +211,8 @@ async function startNintendoMusic(options = {}) {
  */
 async function tryStartPlayback(page) {
   const strategies = [
+    () => page.locator('button[aria-label="Abspielen"]').first(),
+    () => page.getByRole("button", { name: /^abspielen$/i }).first(),
     () => page.getByRole("button", { name: /abspielen|wiedergabe|play/i }).first(),
     () => page.getByText(/^abspielen$/i).first(),
     () => page.locator('button[aria-label*="abspielen" i]').first(),
@@ -218,6 +220,35 @@ async function tryStartPlayback(page) {
     () => page.locator('[data-testid*="play" i]').first(),
     () => page.locator('button:has(svg[class*="play" i])').first(),
   ];
+
+  const waitForPlayButton = async () => {
+    const candidates = [
+      page.locator('button[aria-label="Abspielen"]').first(),
+      page.getByRole("button", { name: /^abspielen$/i }).first(),
+      page.locator('button[aria-label*="abspielen" i]').first(),
+    ];
+
+    for (const loc of candidates) {
+      try {
+        await loc.waitFor({ state: "visible", timeout: 15000 });
+        return loc;
+      } catch {
+        // naechster Kandidat
+      }
+    }
+    return null;
+  };
+
+  const preferred = await waitForPlayButton();
+  if (preferred) {
+    try {
+      await preferred.click();
+      console.log('[browser] Wiedergabe gestartet via "Abspielen".');
+      return true;
+    } catch {
+      // Fallback auf die weiteren Strategien unten
+    }
+  }
 
   for (const getLocator of strategies) {
     try {
