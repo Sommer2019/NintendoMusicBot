@@ -192,6 +192,14 @@ async function startNintendoMusic(options = {}) {
       if (++burst >= 12) clearInterval(fastTimer);
     }, 500);
     routeTimer = setInterval(() => routeChromeAudioToCable(cfg, true), 5000);
+  } else {
+    routeLinuxAudioToSink(cfg);
+    let burst = 0;
+    fastTimer = setInterval(() => {
+      routeLinuxAudioToSink(cfg, true);
+      if (++burst >= 12) clearInterval(fastTimer);
+    }, 500);
+    routeTimer = setInterval(() => routeLinuxAudioToSink(cfg, true), 5000);
   }
 
   const stop = async () => {
@@ -222,6 +230,8 @@ async function startNintendoMusic(options = {}) {
     cycleLoop: () => cycleLoop(page),
     // Repeat gezielt setzen: "one" | "all" | "stop".
     setLoop: (mode) => setLoopMode(page, mode),
+    /** Warteschlange leeren. */
+    clearQueue: () => clearQueue(page),
 
     /** Lautstaerke in Prozent (0..100) setzen. Gibt den neuen Wert zurueck. */
     setVolume: async (pct) => {
@@ -775,6 +785,80 @@ async function queueNext(page, query) {
 }
 
 /**
+ * Leert die aktuelle Warteschlange. Versucht zuerst den Queue-Button,
+ * dann verschiedene "leeren"-/"loeschen"-Eintraege.
+ */
+async function clearQueue(page) {
+  const queueButtonCandidates = [
+    /warteschlange/i,
+    /queue/i,
+    /up next/i,
+    /naechste/i,
+  ];
+  const clearItemCandidates = [
+    /warteschlange leeren/i,
+    /queue leeren/i,
+    /warteschlange loeschen/i,
+    /queue loeschen/i,
+    /alle entfernen/i,
+    /alles entfernen/i,
+    /clear queue/i,
+    /clear all/i,
+  ];
+
+  try {
+    let opened = false;
+
+    // Erst direkt nach einem sichtbaren "Leeren"-/"Loeschen"-Button suchen.
+    if (await clickControl(page, clearItemCandidates, 1500)) {
+      return true;
+    }
+
+    // Dann Queue-Ansicht oeffnen und dort erneut nach dem Clear-Eintrag suchen.
+    for (const pat of queueButtonCandidates) {
+      try {
+        const loc = page.getByRole("button", { name: pat }).first();
+        await loc.waitFor({ state: "visible", timeout: 1500 });
+        await loc.click();
+        opened = true;
+        break;
+      } catch {
+        // naechster Kandidat
+      }
+    }
+
+    if (!opened) {
+      console.warn("[browser] Queue-Button nicht gefunden.");
+      return false;
+    }
+
+    await page.waitForTimeout(300);
+
+    if (await clickControl(page, clearItemCandidates, 2000)) {
+      return true;
+    }
+
+    // Falls der Eintrag als Menuitem statt Button gerendert wird.
+    for (const pat of clearItemCandidates) {
+      try {
+        const item = page.getByRole("menuitem", { name: pat }).first();
+        await item.waitFor({ state: "visible", timeout: 1500 });
+        await item.click();
+        return true;
+      } catch {
+        // naechster Kandidat
+      }
+    }
+
+    console.warn("[browser] Warteschlange-leeren Aktion nicht gefunden.");
+    return false;
+  } catch (err) {
+    console.warn("[browser] Warteschlange leeren fehlgeschlagen:", err.message);
+    return false;
+  }
+}
+
+/**
  * Sucht eine Playlist und spielt sie ab:
  *   1. Playlist-Treffer (<a href*="/playlist/">) anklicken -> Playlist-Seite
  *   2. grossen "Abspielen"-Button klicken (Text stabil, class gehasht)
@@ -883,6 +967,63 @@ function routeChromeAudioToCable(cfg, quiet = false) {
     svv.on("exit", () =>
       console.log(`[browser] Chrome-Audio -> "${cfg.cableInputName}" gesetzt.`)
     );
+  }
+}
+
+/**
+ * Erzwingt auf Linux/PipeWire/PulseAudio das Routing aller Chromium-Sink-Inputs
+ * auf den gewünschten Null-Sink.
+ */
+function routeLinuxAudioToSink(cfg, quiet = false) {
+  const sink = cfg.audioSink || "ntmusic";
+
+  try {
+    const { execSync } = require("node:child_process");
+    const sinks = execSync("pactl list short sinks", { encoding: "utf8" });
+    if (!new RegExp(`^\\d+\\s+${sink}\\s`, "m").test(sinks)) {
+      if (!quiet) {
+        console.warn(
+          `[browser] PulseAudio-Sink "${sink}" fehlt – Audio-Routing kann nicht erzwungen werden.`
+        );
+      }
+      return;
+    }
+
+    execSync(`pactl set-default-sink ${sink}`);
+
+    const sinkInputs = execSync("pactl list sink-inputs", { encoding: "utf8" });
+    const blocks = sinkInputs.split(/\n(?=Sink Input #)/g);
+    let moved = 0;
+
+    for (const block of blocks) {
+      const idMatch = block.match(/Sink Input #(?<id>\d+)/);
+      if (!idMatch?.groups?.id) continue;
+
+      const binaryMatch = block.match(
+        /application\.process\.binary\s*=\s*"([^"]+)"/i
+      );
+      const nameMatch = block.match(/application\.name\s*=\s*"([^"]+)"/i);
+      const binary = (binaryMatch?.[1] || "").toLowerCase();
+      const name = (nameMatch?.[1] || "").toLowerCase();
+      const isChromium = /chrome|chromium/.test(binary) || /chrome|chromium/.test(name);
+      if (!isChromium) continue;
+
+      execSync(`pactl move-sink-input ${idMatch.groups.id} ${sink}`);
+      moved++;
+    }
+
+    if (!quiet) {
+      console.log(
+        `[browser] Linux-Audio -> Sink "${sink}" gesetzt${moved ? ` (${moved} Input(s) verschoben)` : ""}.`
+      );
+    }
+  } catch (err) {
+    if (!quiet) {
+      console.warn(
+        "[browser] Linux-Audio-Routing per pactl fehlgeschlagen:",
+        err.message
+      );
+    }
   }
 }
 

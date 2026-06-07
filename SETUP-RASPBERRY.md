@@ -151,6 +151,14 @@ journalctl -u dcnintendomusic -f      # Logs ansehen
 - **`9012-5401` / DRM-Fehler:** Widevine im System-Chromium fehlt/zu alt → Schritt 0.
 - **Kein Ton, sink-input fehlt:** Läuft PulseAudio/PipeWire im Service-Kontext?
   `XDG_RUNTIME_DIR` korrekt? Ggf. Bot als der Desktop-User starten.
+- **Chromium spielt, aber Discord bleibt stumm:** Prüfe, ob der Sink wirklich auf
+  `ntmusic` zeigt:
+  ```bash
+  pactl set-default-sink ntmusic
+  pactl list short sink-inputs
+  ```
+  Im Bot-Log sollte außerdem etwas wie `Linux-Audio -> Sink "ntmusic" gesetzt`
+  auftauchen.
 - **FFmpeg „Unknown input format pulse":** `ffmpegPath` zeigt auf `ffmpeg-static`
   statt System-FFmpeg → in config.json `"ffmpegPath": "ffmpeg"`.
 - **Chromium startet nicht headless:** immer über `xvfb-run` starten.

@@ -6,9 +6,10 @@
 //  Browser (siehe browser.js) und steuert Wiedergabe/Suche per Slash-Commands.
 //
 //  Slash-Commands:
-//    /join /leave /stay /unstay /status
-//    /play /pause /skip /loop[modus] /volumeup /volumedown
-//    /track <name>   /queue <name>
+//    /join /leave /stay /unstay /status /ping
+//    /play /pause /skip[anzahl] /back[anzahl] /loop[modus]
+//    /lautstaerke hoch[anzahl] /lautstaerke runter[anzahl] /lautstaerke set <prozent>
+//    /track <name> /title <name> /queue add <name> | /queue clear
 // ---------------------------------------------------------------------------
 
 const { spawn } = require("node:child_process");
@@ -508,12 +509,15 @@ const commands = [
     .setName("status")
     .setDescription("Zeigt, ob gerade gestreamt wird"),
   new SlashCommandBuilder()
+    .setName("ping")
+    .setDescription("Mini-Test: antwortet mit Pong"),
+  new SlashCommandBuilder()
     .setName("play")
     .setDescription("Wiedergabe fortsetzen – oder mit Titel: suchen und abspielen")
     .addStringOption((o) =>
       o
         .setName("titel")
-        .setDescription("Optional: Track suchen und abspielen")
+        .setDescription("Optional: Titel suchen und abspielen")
         .setRequired(false)
     ),
   new SlashCommandBuilder()
@@ -521,7 +525,26 @@ const commands = [
     .setDescription("Wiedergabe pausieren"),
   new SlashCommandBuilder()
     .setName("skip")
-    .setDescription("Naechster Track"),
+    .setDescription("Naechster Track (optional mit Anzahl)")
+    .addIntegerOption((o) =>
+      o
+        .setName("anzahl")
+        .setDescription("Wie viele Titel ueberspringen?")
+        .setRequired(false)
+        .setMinValue(1)
+        .setMaxValue(50)
+    ),
+  new SlashCommandBuilder()
+    .setName("back")
+    .setDescription("Vorheriger Track (optional mit Anzahl)")
+    .addIntegerOption((o) =>
+      o
+        .setName("anzahl")
+        .setDescription("Wie viele Titel zurueck?")
+        .setRequired(false)
+        .setMinValue(1)
+        .setMaxValue(50)
+    ),
   new SlashCommandBuilder()
     .setName("loop")
     .setDescription("Wiederholung: ein Titel / alle / aus (ohne Auswahl: durchschalten)")
@@ -536,22 +559,72 @@ const commands = [
         )
     ),
   new SlashCommandBuilder()
-    .setName("volumeup")
-    .setDescription("Lauter (+10%)"),
-  new SlashCommandBuilder()
-    .setName("volumedown")
-    .setDescription("Leiser (-10%)"),
+    .setName("lautstaerke")
+    .setDescription("Lautstaerke aendern")
+    .addSubcommand((s) =>
+      s
+        .setName("hoch")
+        .setDescription("Lauter")
+        .addIntegerOption((o) =>
+          o
+            .setName("anzahl")
+            .setDescription("Wie viele 10%-Schritte lauter?")
+            .setRequired(false)
+            .setMinValue(1)
+            .setMaxValue(10)
+        )
+    )
+    .addSubcommand((s) =>
+      s
+        .setName("runter")
+        .setDescription("Leiser")
+        .addIntegerOption((o) =>
+          o
+            .setName("anzahl")
+            .setDescription("Wie viele 10%-Schritte leiser?")
+            .setRequired(false)
+            .setMinValue(1)
+            .setMaxValue(10)
+        )
+    )
+    .addSubcommand((s) =>
+      s
+        .setName("set")
+        .setDescription("Lautstaerke direkt setzen")
+        .addIntegerOption((o) =>
+          o
+            .setName("prozent")
+            .setDescription("Ziel-Lautstaerke in Prozent")
+            .setRequired(true)
+            .setMinValue(0)
+            .setMaxValue(100)
+        )
+    ),
   new SlashCommandBuilder()
     .setName("track")
-    .setDescription("Track suchen und abspielen")
+    .setDescription("Titel suchen und abspielen")
     .addStringOption((o) =>
-      o.setName("name").setDescription("Suchbegriff").setRequired(true)
+      o.setName("name").setDescription("Titel oder Suchbegriff").setRequired(true)
+    ),
+  new SlashCommandBuilder()
+    .setName("title")
+    .setDescription("Titel suchen und abspielen (Alias zu /track)")
+    .addStringOption((o) =>
+      o.setName("name").setDescription("Titel oder Suchbegriff").setRequired(true)
     ),
   new SlashCommandBuilder()
     .setName("queue")
-    .setDescription("Track suchen und als Naechstes einreihen")
-    .addStringOption((o) =>
-      o.setName("name").setDescription("Suchbegriff").setRequired(true)
+    .setDescription("Titel als Naechstes einreihen oder Warteschlange leeren")
+    .addSubcommand((s) =>
+      s
+        .setName("add")
+        .setDescription("Titel suchen und als Naechstes einreihen")
+        .addStringOption((o) =>
+          o.setName("name").setDescription("Titel oder Suchbegriff").setRequired(true)
+        )
+    )
+    .addSubcommand((s) =>
+      s.setName("clear").setDescription("Warteschlange leeren")
     ),
   new SlashCommandBuilder()
     .setName("playlist")
@@ -667,15 +740,23 @@ client.on(Events.InteractionCreate, async (interaction) => {
     });
   }
 
+  if (interaction.commandName === "ping") {
+    return interaction.reply({
+      content: "Pong! 🏓",
+      flags: MessageFlags.Ephemeral,
+    });
+  }
+
   // --- Player-Steuerung (benoetigt den laufenden Hintergrund-Browser) ------
   const playerCommands = new Set([
     "play",
     "pause",
     "skip",
+    "back",
     "loop",
-    "volumeup",
-    "volumedown",
+    "lautstaerke",
     "track",
+    "title",
     "queue",
     "playlist",
   ]);
@@ -726,10 +807,28 @@ client.on(Events.InteractionCreate, async (interaction) => {
         case "pause":
           await h.pause();
           return interaction.editReply("⏸️ Pausiert.");
-        case "skip": {
-          const ok = await h.next();
+        case "skip":
+        case "back": {
+          const count = interaction.options.getInteger("anzahl") ?? 1;
+          const step = interaction.commandName === "skip" ? "next" : "prev";
+          const label = interaction.commandName === "skip" ? "⏭️" : "⏮️";
+          let ok = false;
+          for (let i = 0; i < count; i++) {
+            ok = await h[step]();
+            if (!ok) break;
+            if (i < count - 1) await new Promise((r) => setTimeout(r, 300));
+          }
+          if (!ok) {
+            return interaction.editReply(
+              interaction.commandName === "skip"
+                ? "Skip-Button nicht gefunden."
+                : "Zurueck-Button nicht gefunden."
+            );
+          }
           return interaction.editReply(
-            ok ? "⏭️ Naechster Track." : "Skip-Button nicht gefunden."
+            count === 1
+              ? `${label} ${interaction.commandName === "skip" ? "Naechster" : "Vorheriger"} Track.`
+              : `${label} ${count} Tracks ${interaction.commandName === "skip" ? "uebersprungen" : "zurueckgesprungen"}.`
           );
         }
         case "loop": {
@@ -752,20 +851,29 @@ client.on(Events.InteractionCreate, async (interaction) => {
             ok ? "🔁 Wiederholung umgeschaltet." : "Loop-Button nicht gefunden."
           );
         }
-        case "volumeup": {
-          const v = await h.nudgeVolume(10);
-          return interaction.editReply(`🔊 Lautstaerke: ${v}%`);
+        case "lautstaerke": {
+          const sub = interaction.options.getSubcommand();
+          if (sub === "set") {
+            const pct = interaction.options.getInteger("prozent", true);
+            const v = await h.setVolume(pct);
+            return interaction.editReply(`🎚️ Lautstaerke: ${v}%`);
+          }
+          const steps = interaction.options.getInteger("anzahl") ?? 1;
+          const delta = sub === "hoch" ? steps * 10 : -steps * 10;
+          const v = await h.nudgeVolume(delta);
+          return interaction.editReply(
+            sub === "hoch"
+              ? `🔊 Lautstaerke: ${v}% (+${steps * 10}%)`
+              : `🔉 Lautstaerke: ${v}% (-${steps * 10}%)`
+          );
         }
-        case "volumedown": {
-          const v = await h.nudgeVolume(-10);
-          return interaction.editReply(`🔉 Lautstaerke: ${v}%`);
-        }
-        case "track": {
+        case "track":
+        case "title": {
           const q = interaction.options.getString("name", true);
           const res = await h.search(q);
           if (!res) {
             return interaction.editReply(
-              `Nichts Abspielbares fuer **${q}** gefunden.`
+              `Kein abspielbarer Titel fuer **${q}** gefunden.`
             );
           }
           return interaction.editReply({
@@ -773,11 +881,20 @@ client.on(Events.InteractionCreate, async (interaction) => {
           });
         }
         case "queue": {
+          const sub = interaction.options.getSubcommand();
+          if (sub === "clear") {
+            const ok = await h.clearQueue();
+            return interaction.editReply(
+              ok
+                ? "🧹 Warteschlange geleert."
+                : "Warteschlange konnte nicht geleert werden (Button/Menü nicht gefunden)."
+            );
+          }
           const q = interaction.options.getString("name", true);
           const res = await h.queueNext(q);
           if (!res) {
             return interaction.editReply(
-              `Nichts Einreihbares fuer **${q}** gefunden.`
+              `Kein einreihbarer Titel fuer **${q}** gefunden.`
             );
           }
           const content = res.loopSwitched
