@@ -126,11 +126,24 @@ async function startNintendoMusic(options = {}) {
           "          oder /usr/bin/chromium."
       );
     }
-    // Chromium-Audio direkt in den PulseAudio null-sink leiten (kein Routing-
-    // Nachfassen noetig wie unter Windows).
+    // Chromium-Audio in den PulseAudio/PipeWire null-sink leiten.
+    // WICHTIG: Laeuft der Bot als Dienst, fehlen oft XDG_RUNTIME_DIR/PULSE_SERVER
+    // -> Chromium findet den Audio-Socket nicht und gibt KEINEN Ton aus
+    // (Track spielt, aber kein sink-input). Wir leiten beide explizit aus der
+    // UID ab, damit Chromium den User-Socket immer trifft.
+    const uid =
+      typeof process.getuid === "function" ? process.getuid() : 1000;
+    const runtimeDir = process.env.XDG_RUNTIME_DIR || `/run/user/${uid}`;
+    const pulseServer =
+      process.env.PULSE_SERVER || `unix:${runtimeDir}/pulse/native`;
+    console.log(
+      `[browser] Audio-Env: XDG_RUNTIME_DIR=${runtimeDir} PULSE_SERVER=${pulseServer} PULSE_SINK=${cfg.audioSink}`
+    );
     launchOpts.env = {
       ...process.env,
       ...(displaySetup.display ? { DISPLAY: displaySetup.display } : {}),
+      XDG_RUNTIME_DIR: runtimeDir,
+      PULSE_SERVER: pulseServer,
       PULSE_SINK: cfg.audioSink,
     };
   }

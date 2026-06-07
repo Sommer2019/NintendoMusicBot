@@ -390,13 +390,32 @@ async function rejoinPersistent(guildId, playDefault = false) {
 
     // Nach dem Start (nicht bei Reconnects) die Default-Playlist anspielen,
     // damit nach einem Neustart sofort Musik laeuft.
-    if (playDefault && browserEnabled && defaultPlaylist && browserHandle) {
-      startNowPlaying();
-      try {
-        await browserHandle.playPlaylist(defaultPlaylist);
-        console.log(`[autojoin] Default-Playlist gestartet: "${defaultPlaylist}".`);
-      } catch (err) {
-        console.error("[autojoin] Default-Playlist fehlgeschlagen:", err.message);
+    if (playDefault && browserEnabled && browserHandle) {
+      if (!defaultPlaylist) {
+        console.log(
+          "[autojoin] Keine browser.defaultPlaylist gesetzt – kein Auto-Play."
+        );
+      } else {
+        startNowPlaying();
+        // Direkt nach dem Start ist die Seite oft noch nicht bereit
+        // (Login/Onboarding lädt) -> warten und mehrfach versuchen.
+        for (let attempt = 1; attempt <= 3; attempt++) {
+          await new Promise((r) => setTimeout(r, 3000));
+          try {
+            const title = await browserHandle.playPlaylist(defaultPlaylist);
+            if (title) {
+              console.log(`[autojoin] Default-Playlist gestartet: "${title}".`);
+              break;
+            }
+            console.warn(
+              `[autojoin] Default-Playlist Versuch ${attempt}/3 ohne Treffer…`
+            );
+          } catch (err) {
+            console.warn(
+              `[autojoin] Default-Playlist Versuch ${attempt}/3: ${err.message}`
+            );
+          }
+        }
       }
     }
   } catch (err) {
