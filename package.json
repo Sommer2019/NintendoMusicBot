@@ -4,6 +4,9 @@
   "description": "",
   "main": "index.js",
   "scripts": {
+    "browser:login": "node test-browser.js --visible",
+    "devices": "node list-devices.js",
+    "inspect": "node inspect-player.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "private": true
