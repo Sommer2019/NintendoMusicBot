@@ -495,18 +495,50 @@ const commands = [
 async function registerCommands() {
   const rest = new REST({ version: "10" }).setToken(config.token);
   const appId = client.application.id;
+
   if (config.guildId && !config.guildId.startsWith("OPTIONAL")) {
-    // Guild-Commands sind sofort verfuegbar (gut zum Testen).
+    // Fester Test-Server: Guild-Commands, sofort verfuegbar.
     await rest.put(Routes.applicationGuildCommands(appId, config.guildId), {
       body: commands,
     });
     console.log("Slash-Commands fuer Guild", config.guildId, "registriert.");
-  } else {
-    // Globale Commands koennen bis zu ~1h brauchen, bis sie ueberall sind.
-    await rest.put(Routes.applicationCommands(appId), { body: commands });
-    console.log("Globale Slash-Commands registriert (Verteilung kann dauern).");
+    return;
   }
+
+  // Kein fester guildId -> in JEDEN aktuellen Server direkt registrieren.
+  // Guild-Commands erscheinen SOFORT (globale braeuchten bis zu ~1 h).
+  // Alte globale Commands entfernen, damit keine Duplikate entstehen.
+  await rest.put(Routes.applicationCommands(appId), { body: [] }).catch(() => {});
+
+  const guilds = await client.guilds.fetch();
+  let ok = 0;
+  for (const [gid] of guilds) {
+    try {
+      await rest.put(Routes.applicationGuildCommands(appId, gid), {
+        body: commands,
+      });
+      ok++;
+    } catch (err) {
+      console.error(`Command-Registrierung fuer Guild ${gid}:`, err.message);
+    }
+  }
+  console.log(`Slash-Commands fuer ${ok} Server registriert (sofort verfuegbar).`);
 }
+
+// Tritt der Bot einem neuen Server bei, dort die Commands sofort registrieren.
+client.on(Events.GuildCreate, async (guild) => {
+  if (config.guildId && !config.guildId.startsWith("OPTIONAL")) return;
+  try {
+    const rest = new REST({ version: "10" }).setToken(config.token);
+    await rest.put(
+      Routes.applicationGuildCommands(client.application.id, guild.id),
+      { body: commands }
+    );
+    console.log(`Slash-Commands fuer neuen Server "${guild.name}" registriert.`);
+  } catch (err) {
+    console.error("Command-Registrierung (GuildCreate):", err.message);
+  }
+});
 
 // Auf Linux/Pi den PulseAudio null-sink anlegen, falls noch nicht vorhanden.
 function ensureLinuxSink() {
@@ -598,6 +630,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
     // "Spielt gerade"-Tracking erst hier starten (nicht schon bei /join). Die
     // Karte erscheint ohnehin nur, sobald wirklich ein Track laeuft.
     startNowPlaying();
+    // Diagnose: kurz nach einem Play-Befehl den Media-Status loggen.
+    if (["play", "track", "playlist"].includes(interaction.commandName)) {
+      setTimeout(() => h.diag().catch(() => {}), 6000);
+    }
     try {
       switch (interaction.commandName) {
         case "play": {

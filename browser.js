@@ -235,6 +235,9 @@ async function startNintendoMusic(options = {}) {
 
     /** Aktuell laufenden Titel auslesen: { title, game, image } | null. */
     nowPlaying: () => getNowPlaying(page),
+
+    /** Diagnose: Media-/DRM-Status ins Log schreiben. */
+    diag: () => logMediaDiagnostics(page),
   };
 }
 
