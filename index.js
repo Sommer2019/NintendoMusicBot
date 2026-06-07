@@ -6,7 +6,7 @@
 //  Browser (siehe browser.js) und steuert Wiedergabe/Suche per Slash-Commands.
 //
 //  Slash-Commands:
-//    /join /leave /status
+//    /join /leave /stay /unstay /status
 //    /play /pause /skip /loop[modus] /volumeup /volumedown
 //    /track <name>   /queue <name>
 // ---------------------------------------------------------------------------
@@ -291,6 +291,7 @@ function stopCapture(guildId) {
 // bei Trennung automatisch wieder verbunden. Gespeichert in autojoin.json.
 const autojoinPath = path.join(__dirname, "autojoin.json");
 const persistentGuilds = new Set(); // guildIds, die 24/7 bleiben sollen
+const stayAutoPaused = new Set(); // guildIds, deren Wiedergabe wegen leerem Talk pausiert wurde
 
 function loadAutojoin() {
   try {
@@ -308,6 +309,7 @@ function saveAutojoin(data) {
 }
 function clearAutojoin(guildId) {
   persistentGuilds.delete(guildId);
+  stayAutoPaused.delete(guildId);
   const aj = loadAutojoin();
   if (aj && aj.guildId === guildId) {
     try {
@@ -315,6 +317,45 @@ function clearAutojoin(guildId) {
     } catch {
       /* egal */
     }
+  }
+}
+
+function getCurrentVoiceChannelId(guild) {
+  const connection = getVoiceConnection(guild.id);
+  return connection?.joinConfig?.channelId ?? guild.members.me?.voice?.channelId ?? null;
+}
+
+function countHumanMembersInVoiceChannel(guild, channelId) {
+  if (!channelId) return 0;
+  return guild.voiceStates.cache.filter(
+    (vs) => vs.channelId === channelId && !vs.member?.user.bot
+  ).size;
+}
+
+async function syncStayAudioState(guildId) {
+  if (!persistentGuilds.has(guildId) || !browserEnabled) return;
+  const h = browserHandle;
+  if (!h) return;
+
+  const guild = client.guilds.cache.get(guildId);
+  if (!guild) return;
+
+  const channelId = getCurrentVoiceChannelId(guild);
+  const humanCount = countHumanMembersInVoiceChannel(guild, channelId);
+  const autoPaused = stayAutoPaused.has(guildId);
+
+  try {
+    if (humanCount === 0 && !autoPaused) {
+      await h.pause();
+      stayAutoPaused.add(guildId);
+      console.log(`[stay] Pausiert: kein Mensch mehr in ${channelId ?? "Voice"}.`);
+    } else if (humanCount > 0 && autoPaused) {
+      await h.play();
+      stayAutoPaused.delete(guildId);
+      console.log(`[stay] Fortgesetzt: wieder ${humanCount} Mensch(en) im Voice.`);
+    }
+  } catch (err) {
+    console.error(`[stay] Auto-Pause/Resume fehlgeschlagen (${guildId}):`, err.message);
   }
 }
 
@@ -372,6 +413,10 @@ async function joinAndStream(guild, voiceChannel, textChannel) {
       stopBrowserIfIdle();
     }
   });
+
+  if (persistentGuilds.has(guildId)) {
+    setTimeout(() => syncStayAudioState(guildId), 1000);
+  }
 
   return voiceChannel.name;
 }
@@ -456,6 +501,9 @@ const commands = [
   new SlashCommandBuilder()
     .setName("stay")
     .setDescription("Bot bleibt dauerhaft (24/7) in deinem Voice-Channel"),
+  new SlashCommandBuilder()
+    .setName("unstay")
+    .setDescription("Beendet den 24/7-Modus, ohne den Bot direkt zu trennen"),
   new SlashCommandBuilder()
     .setName("status")
     .setDescription("Zeigt, ob gerade gestreamt wird"),
@@ -775,6 +823,31 @@ client.on(Events.InteractionCreate, async (interaction) => {
     });
   }
 
+  if (interaction.commandName === "unstay") {
+    const hadStay = persistentGuilds.has(guildId) || loadAutojoin()?.guildId === guildId;
+    const connection = getVoiceConnection(guildId);
+    clearAutojoin(guildId);
+    stopCapture(guildId);
+    clearNowPlayingFor(guildId);
+    stopBrowserIfIdle();
+
+    if (connection) {
+      connection.destroy();
+      return interaction.reply(
+        hadStay
+          ? "24/7-Modus beendet, Bot getrennt. 👋"
+          : "Bot getrennt. 👋"
+      );
+    }
+
+    return interaction.reply({
+      content: hadStay
+        ? "24/7-Modus beendet, aber ich war gerade in keinem Voice-Channel."
+        : "24/7-Modus ist hier gerade nicht aktiv.",
+      flags: MessageFlags.Ephemeral,
+    });
+  }
+
   if (interaction.commandName === "join" || interaction.commandName === "stay") {
     const stay = interaction.commandName === "stay";
     const voiceChannel = interaction.member?.voice?.channel;
@@ -801,6 +874,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       await joinAndStream(interaction.guild, voiceChannel, interaction.channel);
 
+      if (stay) {
+        await syncStayAudioState(guildId);
+      }
+
       await interaction.editReply(
         stay
           ? `📌 Bleibe jetzt **24/7** in **${voiceChannel.name}** (auch nach Neustart). 🎶`
@@ -823,6 +900,22 @@ client.on(Events.InteractionCreate, async (interaction) => {
       );
     }
   }
+});
+
+client.on(Events.VoiceStateUpdate, (oldState, newState) => {
+  const guildId = newState.guild.id;
+  if (!persistentGuilds.has(guildId)) return;
+
+  const connection = getVoiceConnection(guildId);
+  const channelId = connection?.joinConfig?.channelId;
+  if (!channelId) return;
+
+  const oldChannelId = oldState.channelId;
+  const newChannelId = newState.channelId;
+  const affected = oldChannelId === channelId || newChannelId === channelId;
+  if (!affected) return;
+
+  setTimeout(() => syncStayAudioState(guildId), 750);
 });
 
 // Sobald eine neue Nachricht im Now-Playing-Channel auftaucht, die Karte
