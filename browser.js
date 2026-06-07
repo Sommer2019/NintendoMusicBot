@@ -257,6 +257,8 @@ async function startNintendoMusic(options = {}) {
 
     /** Track suchen und als Naechstes einreihen. */
     queueNext: (query) => queueNext(page, query),
+    /** Den N-ten Treffer als Naechstes einreihen. */
+    queueResultIndex: (query, index) => queueResultIndex(page, query, index),
 
     /** Playlist suchen und abspielen. */
     playPlaylist: (query) => playPlaylist(page, query),
@@ -797,42 +799,57 @@ async function playResultIndex(page, query, index) {
 }
 
 /**
- * Sucht einen Track und reiht ihn als Naechstes ein:
- * erste Track-Karte -> ⋮ "Menü öffnen" -> "Als Nächstes wiedergeben".
+ * Reiht eine bestimmte Track-Karte als Naechstes ein:
+ * Karte -> ⋮ "Menü öffnen" -> "Als Nächstes wiedergeben".
  */
+async function queueCard(page, card) {
+  await card.waitFor({ state: "visible", timeout: 5000 });
+  const info = await readCardInfo(card);
+
+  // ⋮-Button ist teils erst bei Hover sichtbar.
+  await card.hover();
+  await card.locator('button[aria-label="Menü öffnen"]').first().click();
+
+  const item = page
+    .getByRole("menuitem", { name: /als n(ä|ae)chstes wiedergeben/i })
+    .first();
+  await item.waitFor({ state: "visible", timeout: 3000 });
+  await item.click();
+
+  // Wird gerade EIN Titel wiederholt, kommt der eingereihte Track nie dran
+  // -> automatisch auf "alle" umstellen.
+  let loopSwitched = false;
+  const cur = await readLoop(page);
+  if (cur.mode === "one") {
+    loopSwitched = await setLoopMode(page, "all");
+  }
+
+  console.log(
+    `[browser] "${info.title}" als Naechstes eingereiht` +
+      (loopSwitched ? " (Loop: ein Titel -> alle)." : ".")
+  );
+  return { ...info, loopSwitched };
+}
+
+/** Sucht einen Track und reiht den ersten Treffer als Naechstes ein. */
 async function queueNext(page, query) {
   if (!(await performSearch(page, query))) return false;
-
-  const card = firstTrackCard(page);
   try {
-    await card.waitFor({ state: "visible", timeout: 5000 });
-    const info = await readCardInfo(card);
-
-    // ⋮-Button ist teils erst bei Hover sichtbar.
-    await card.hover();
-    await card.locator('button[aria-label="Menü öffnen"]').first().click();
-
-    const item = page
-      .getByRole("menuitem", { name: /als n(ä|ae)chstes wiedergeben/i })
-      .first();
-    await item.waitFor({ state: "visible", timeout: 3000 });
-    await item.click();
-
-    // Wird gerade EIN Titel wiederholt, kommt der eingereihte Track nie dran
-    // -> automatisch auf "alle" umstellen.
-    let loopSwitched = false;
-    const cur = await readLoop(page);
-    if (cur.mode === "one") {
-      loopSwitched = await setLoopMode(page, "all");
-    }
-
-    console.log(
-      `[browser] "${info.title || query}" als Naechstes eingereiht` +
-        (loopSwitched ? " (Loop: ein Titel -> alle)." : ".")
-    );
-    return { ...info, loopSwitched };
+    return await queueCard(page, firstTrackCard(page));
   } catch (err) {
     console.warn(`[browser] Queue "${query}" fehlgeschlagen:`, err.message);
+    return false;
+  }
+}
+
+/** Reiht den N-ten Treffer einer (erneuten) Suche als Naechstes ein. */
+async function queueResultIndex(page, query, index) {
+  if (!(await performSearch(page, query))) return false;
+  try {
+    const card = page.locator('#results-panel div[role="button"]').nth(index);
+    return await queueCard(page, card);
+  } catch (err) {
+    console.warn(`[browser] Queue #${index} "${query}" fehlgeschlagen:`, err.message);
     return false;
   }
 }

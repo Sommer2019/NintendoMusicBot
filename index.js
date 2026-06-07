@@ -179,6 +179,30 @@ function trackEmbed(header, info) {
   return embed;
 }
 
+// Baut die Antwort mit Auswahlmenue (mehrere Treffer). mode: "play" | "queue".
+function makeSelectionReply(query, results, mode) {
+  const selId = `${Date.now().toString(36)}${Math.random()
+    .toString(36)
+    .slice(2, 7)}`;
+  pendingSelections.set(selId, { query, mode });
+  setTimeout(() => pendingSelections.delete(selId), 5 * 60_000);
+  const verb = mode === "queue" ? "einreihen" : "abspielen";
+  const menu = new StringSelectMenuBuilder()
+    .setCustomId(`sel:${selId}`)
+    .setPlaceholder(`Welchen Titel ${verb}?`)
+    .addOptions(
+      results.slice(0, 5).map((r, i) => ({
+        label: (r.title || `Treffer ${i + 1}`).slice(0, 100),
+        description: (r.game || "").slice(0, 100) || undefined,
+        value: String(i),
+      }))
+    );
+  return {
+    content: `🔎 Mehrere Treffer fuer **${query}** – waehle aus:`,
+    components: [new ActionRowBuilder().addComponents(menu)],
+  };
+}
+
 // Erkennt unsere eigene Karte (gegen Endlosschleife beim Neu-Posten).
 function isNpCard(message) {
   return (
@@ -732,13 +756,13 @@ client.once(Events.ClientReady, async (c) => {
 });
 
 client.on(Events.InteractionCreate, async (interaction) => {
-  // Auswahlmenue bei Mehrfachtreffern (aus /track bzw. /title).
+  // Auswahlmenue bei Mehrfachtreffern (aus /track, /title bzw. /queue add).
   if (
     interaction.isStringSelectMenu() &&
-    interaction.customId.startsWith("trksel:")
+    interaction.customId.startsWith("sel:")
   ) {
     await interaction.deferUpdate();
-    const selId = interaction.customId.slice("trksel:".length);
+    const selId = interaction.customId.slice("sel:".length);
     const pending = pendingSelections.get(selId);
     const h = browserHandle;
     if (!pending || !h) {
@@ -750,8 +774,18 @@ client.on(Events.InteractionCreate, async (interaction) => {
     pendingSelections.delete(selId);
     const index = parseInt(interaction.values[0], 10) || 0;
     try {
-      const info = await h.playResultIndex(pending.query, index);
       startNowPlaying();
+      if (pending.mode === "queue") {
+        const res = await h.queueResultIndex(pending.query, index);
+        return interaction.editReply({
+          content: res?.loopSwitched
+            ? "🔁 Wiederholung von *ein Titel* auf *alle* umgestellt."
+            : null,
+          embeds: res ? [trackEmbed("➕ Als Nächstes", res)] : [],
+          components: [],
+        });
+      }
+      const info = await h.playResultIndex(pending.query, index);
       return interaction.editReply({
         content: null,
         embeds: info ? [trackEmbed("🔎 Spielt jetzt", info)] : [],
@@ -760,7 +794,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     } catch (err) {
       console.error("[select] fehlgeschlagen:", err);
       return interaction.editReply({
-        content: "Konnte den Titel nicht abspielen.",
+        content: "Aktion fehlgeschlagen.",
         components: [],
       });
     }
@@ -927,27 +961,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
               embeds: [trackEmbed("🔎 Spielt jetzt", info || results[0])],
             });
           }
-          // Mehrere Treffer -> Auswahlmenue.
-          const selId = `${Date.now().toString(36)}${Math.random()
-            .toString(36)
-            .slice(2, 7)}`;
-          pendingSelections.set(selId, { query: q });
-          setTimeout(() => pendingSelections.delete(selId), 5 * 60_000);
-          const menu = new StringSelectMenuBuilder()
-            .setCustomId(`trksel:${selId}`)
-            .setPlaceholder("Welchen Titel abspielen?")
-            .addOptions(
-              results.slice(0, 5).map((r, i) => ({
-                label: (r.title || `Treffer ${i + 1}`).slice(0, 100),
-                description: (r.game || "").slice(0, 100) || undefined,
-                value: String(i),
-              }))
-            );
-          const row = new ActionRowBuilder().addComponents(menu);
-          return interaction.editReply({
-            content: `🔎 Mehrere Treffer fuer **${q}** – waehle aus:`,
-            components: [row],
-          });
+          // Mehrere Treffer -> Auswahlmenue (Modus: abspielen).
+          return interaction.editReply(makeSelectionReply(q, results, "play"));
         }
         case "queue": {
           const aktion = interaction.options.getString("aktion", true);
@@ -966,19 +981,30 @@ client.on(Events.InteractionCreate, async (interaction) => {
               "Fuer **Einreihen** brauche ich einen Titel/Suchbegriff (Option `name`)."
             );
           }
-          const res = await h.queueNext(q);
-          if (!res) {
+          const results = await h.searchResults(q, 5);
+          if (!results || results.length === 0) {
             return interaction.editReply(
               `Kein einreihbarer Titel fuer **${q}** gefunden.`
             );
           }
-          const content = res.loopSwitched
-            ? "🔁 Wiederholung von *ein Titel* auf *alle* umgestellt."
-            : undefined;
-          return interaction.editReply({
-            content,
-            embeds: [trackEmbed("➕ Als Nächstes", res)],
-          });
+          // Genau ein Treffer -> direkt einreihen.
+          if (results.length === 1) {
+            const res = await h.queueResultIndex(q, 0);
+            if (!res) {
+              return interaction.editReply(
+                `Kein einreihbarer Titel fuer **${q}** gefunden.`
+              );
+            }
+            const content = res.loopSwitched
+              ? "🔁 Wiederholung von *ein Titel* auf *alle* umgestellt."
+              : undefined;
+            return interaction.editReply({
+              content,
+              embeds: [trackEmbed("➕ Als Nächstes", res)],
+            });
+          }
+          // Mehrere Treffer -> Auswahlmenue (Modus: einreihen).
+          return interaction.editReply(makeSelectionReply(q, results, "queue"));
         }
         case "playlist": {
           const q = interaction.options.getString("name", true);
