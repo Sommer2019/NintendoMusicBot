@@ -1,6 +1,0 @@
-2026/06/07-12:30:36.356 5c54 Reusing MANIFEST C:\Users\Robin\IdeaProjects\DCNintendoMusic\chrome-profile\Default\Local Storage\leveldb/MANIFEST-000001
-2026/06/07-12:30:36.367 5c54 Recovering log #7
-2026/06/07-12:30:36.373 5c54 Reusing old log C:\Users\Robin\IdeaProjects\DCNintendoMusic\chrome-profile\Default\Local Storage\leveldb/000007.log 
-2026/06/07-13:00:44.652 59e8 Level-0 table #11: started
-2026/06/07-13:00:44.656 59e8 Level-0 table #11: 30380 bytes OK
-2026/06/07-13:00:44.658 59e8 Delete type=0 #7

@@ -14,6 +14,7 @@
   "scripts": {
     "start": "node index.js",
     "browser:login": "node test-browser.js --visible",
+    "browser:test": "node test-browser.js",
     "devices": "node list-devices.js",
     "inspect": "node inspect-player.js",
     "test": "echo \"Error: no test specified\" && exit 1"

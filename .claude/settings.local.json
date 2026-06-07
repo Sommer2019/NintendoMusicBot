@@ -11,7 +11,9 @@
       "Bash(node --check index.js)",
       "Bash(node --check browser.js)",
       "Bash(node --check test-browser.js)",
-      "Bash(node --check inspect-player.js)"
+      "Bash(node --check inspect-player.js)",
+      "Bash(rm -f bot.js)",
+      "Bash(node -e \"JSON.parse\\(require\\('fs'\\).readFileSync\\('package.json','utf8'\\)\\); console.log\\('package.json JSON OK'\\)\")"
     ]
   }
 }
