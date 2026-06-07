@@ -147,7 +147,7 @@ async function startNintendoMusic(options = {}) {
 
   // Schliesst ggf. offene Modals/Dialoge (z.B. "Schließen"-Button auf Startseite).
   try {
-    await page.waitForTimeout(15000);
+    await page.waitForTimeout(10000);
   } catch {
     // ignore
   }
