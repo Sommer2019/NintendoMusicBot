@@ -302,12 +302,13 @@ async function tryCloseModals(page) {
     // Suche nach Close-Buttons anhand Text / aria-label / title.
     const candidates = Array.from(
       document.querySelectorAll('button, [role="button"], [role="dialog"] button')
-    ).filter((el) => {
+    ).filter(async (el) => {
       const label = norm(el.getAttribute("aria-label"));
       const title = norm(el.getAttribute("title"));
       const text = norm(el.textContent);
+      await page.waitForTimeout(5000);
       const match = /schließ|schliessen|schließen|schliess|close|dismiss|zurück|back|exit/.test(
-        label || title || text
+          label || title || text
       );
       return match && isVisible(el);
     });
