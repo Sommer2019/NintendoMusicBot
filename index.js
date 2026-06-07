@@ -438,17 +438,20 @@ client.on(Events.InteractionCreate, async (interaction) => {
         flags: MessageFlags.Ephemeral,
       });
     }
+    // Sofort deferren: auf dem Pi koennen die page.evaluate-Aufrufe laenger als
+    // die 3-Sekunden-Frist von Discord dauern ("Anwendung reagiert nicht").
+    await interaction.deferReply();
     try {
       switch (interaction.commandName) {
         case "play":
           await h.play();
-          return interaction.reply("▶️ Weiter geht's.");
+          return interaction.editReply("▶️ Weiter geht's.");
         case "pause":
           await h.pause();
-          return interaction.reply("⏸️ Pausiert.");
+          return interaction.editReply("⏸️ Pausiert.");
         case "skip": {
           const ok = await h.next();
-          return interaction.reply(
+          return interaction.editReply(
             ok ? "⏭️ Naechster Track." : "Skip-Button nicht gefunden."
           );
         }
@@ -461,28 +464,27 @@ client.on(Events.InteractionCreate, async (interaction) => {
               all: "🔁 Wiederhole **alle**.",
               stop: "➡️ Wiederholung **aus**.",
             }[mode];
-            return interaction.reply(
+            return interaction.editReply(
               ok
                 ? label
                 : "Konnte den Modus nicht setzen (Repeat-Button/Label pruefen, Log)."
             );
           }
           const ok = await h.cycleLoop();
-          return interaction.reply(
+          return interaction.editReply(
             ok ? "🔁 Wiederholung umgeschaltet." : "Loop-Button nicht gefunden."
           );
         }
         case "volumeup": {
           const v = await h.nudgeVolume(10);
-          return interaction.reply(`🔊 Lautstaerke: ${v}%`);
+          return interaction.editReply(`🔊 Lautstaerke: ${v}%`);
         }
         case "volumedown": {
           const v = await h.nudgeVolume(-10);
-          return interaction.reply(`🔉 Lautstaerke: ${v}%`);
+          return interaction.editReply(`🔉 Lautstaerke: ${v}%`);
         }
         case "track": {
           const q = interaction.options.getString("name", true);
-          await interaction.deferReply();
           const res = await h.search(q);
           if (!res) {
             return interaction.editReply(
@@ -495,7 +497,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
         }
         case "queue": {
           const q = interaction.options.getString("name", true);
-          await interaction.deferReply();
           const res = await h.queueNext(q);
           if (!res) {
             return interaction.editReply(

@@ -42,8 +42,13 @@ let xvfbProcess = null;
 const LINUX_CHROMIUM_CANDIDATES = [
   process.env.CHROMIUM_PATH,
   process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH,
-  "/usr/bin/chromium-browser",
+  // Auf Debian/amd64 ist Google Chrome die zuverlaessigste Widevine-Quelle:
+  "/usr/bin/google-chrome-stable",
+  "/usr/bin/google-chrome",
+  "/opt/google/chrome/chrome",
+  // Chromium-Varianten (Debian/Ubuntu/Raspberry Pi OS, snap):
   "/usr/bin/chromium",
+  "/usr/bin/chromium-browser",
   "/snap/bin/chromium",
 ];
 
@@ -155,6 +160,10 @@ async function startNintendoMusic(options = {}) {
 
   // Wiedergabe starten (best effort – Selektor ggf. an echte UI anpassen).
   await tryStartPlayback(page);
+
+  // Diagnose: nach kurzer Wartezeit den echten Media-/DRM-Status loggen.
+  // Klaert "kein Ton" -> spielt das <audio> wirklich, oder steckt DRM fest?
+  setTimeout(() => logMediaDiagnostics(page).catch(() => {}), 7000);
 
   // Audio-Routing:
   //   Linux/Pi -> bereits ueber PULSE_SINK beim Start erledigt, nichts zu tun.
@@ -465,6 +474,48 @@ async function getNowPlaying(page) {
     });
   } catch {
     return null;
+  }
+}
+
+// Diagnose-Ausgabe: Media-Element-Status + moeglicher DRM-Fehler im DOM.
+async function logMediaDiagnostics(page) {
+  const s = await page.evaluate(() => {
+    const el = document.querySelector("audio, video");
+    const txt = document.body ? document.body.innerText || "" : "";
+    const drm = /9012-|kann nicht abgespielt|cannot be played|wiedergegeben werden/i.test(
+      txt
+    );
+    return {
+      hasMediaEl: !!el,
+      paused: el ? el.paused : null,
+      currentTime: el ? Math.round(el.currentTime || 0) : null,
+      readyState: el ? el.readyState : null, // 4 = genug Daten zum Abspielen
+      muted: el ? el.muted : null,
+      volume: el ? el.volume : null,
+      drmErrorVisible: drm,
+    };
+  });
+  console.log("[browser][diag] Media:", JSON.stringify(s));
+  if (s.drmErrorVisible) {
+    console.warn(
+      "[browser][diag] DRM-Fehler im DOM erkannt -> Widevine spielt nicht " +
+        "(ARM/Chromium). Das ist die Ursache fuer 'kein Ton'."
+    );
+  } else if (s.hasMediaEl && s.paused) {
+    console.warn(
+      "[browser][diag] Media-Element ist PAUSIERT -> Wiedergabe lief nicht an " +
+        "(Play-Button/Autoplay?)."
+    );
+  } else if (s.hasMediaEl && !s.paused && s.currentTime > 0) {
+    console.log(
+      "[browser][diag] Audio LAEUFT (currentTime steigt) -> Problem liegt im " +
+        "Audio-Routing (Chromium -> PulseAudio/ntmusic), nicht an DRM."
+    );
+  } else if (!s.hasMediaEl) {
+    console.warn(
+      "[browser][diag] KEIN <audio>/<video>-Element gefunden -> Seite/Player " +
+        "nicht korrekt geladen."
+    );
   }
 }
 
