@@ -75,12 +75,16 @@ npm run devices   # listet die Audio-Geräte – Namen ggf. in config.json korri
 npm start
 ```
 
+`npm start` startet jetzt den Discord-Bot **und** den Browser-Runner. Ein schneller Test ist `/ping` oder `/status` im Discord-Server.
+
 ## 6. Benutzen
 
 1. Geh auf deinem Server in einen **Voice-Channel**.
 2. Tippe **`/join`** → der Bot kommt rein und streamt den Kabel-Ton.
 3. Im **Browser** Nintendo Music abspielen → es läuft im Voice-Channel.
 4. **`/leave`** stoppt und trennt den Bot. **`/status`** zeigt den Zustand.
+
+> Hinweis: Der Discord-Bot antwortet jetzt sofort auf Slash-Commands. Falls du auf dem Pi keinen echten Desktop-Server hast, wird für den Browser automatisch Xvfb genutzt.
 
 ---
 
