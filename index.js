@@ -8,7 +8,7 @@
 //  Slash-Commands:
 //    /join /leave /stay /unstay /status /ping
 //    /play /pause /skip[anzahl] /back[anzahl] /loop[modus]
-//    /lautstaerke hoch[anzahl] /lautstaerke runter[anzahl] /lautstaerke set <prozent>
+//    /volume up[anzahl] /volume down[anzahl] /volume set <prozent>
 //    /track <name> /title <name> /queue add <name> | /queue clear
 // ---------------------------------------------------------------------------
 
@@ -588,11 +588,11 @@ const commands = [
         )
     ),
   new SlashCommandBuilder()
-    .setName("lautstaerke")
+    .setName("volume")
     .setDescription("Lautstaerke aendern")
     .addSubcommand((s) =>
       s
-        .setName("hoch")
+        .setName("up")
         .setDescription("Lauter")
         .addIntegerOption((o) =>
           o
@@ -605,7 +605,7 @@ const commands = [
     )
     .addSubcommand((s) =>
       s
-        .setName("runter")
+        .setName("down")
         .setDescription("Leiser")
         .addIntegerOption((o) =>
           o
@@ -832,7 +832,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     "skip",
     "back",
     "loop",
-    "lautstaerke",
+    "volume",
     "track",
     "title",
     "queue",
@@ -929,7 +929,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
             ok ? "🔁 Wiederholung umgeschaltet." : "Loop-Button nicht gefunden."
           );
         }
-        case "lautstaerke": {
+        case "volume": {
           const sub = interaction.options.getSubcommand();
           if (sub === "set") {
             const pct = interaction.options.getInteger("prozent", true);
@@ -937,10 +937,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
             return interaction.editReply(`🎚️ Lautstaerke: ${v}%`);
           }
           const steps = interaction.options.getInteger("anzahl") ?? 1;
-          const delta = sub === "hoch" ? steps * 10 : -steps * 10;
+          const delta = sub === "up" ? steps * 10 : -steps * 10;
           const v = await h.nudgeVolume(delta);
           return interaction.editReply(
-            sub === "hoch"
+            sub === "up"
               ? `🔊 Lautstaerke: ${v}% (+${steps * 10}%)`
               : `🔉 Lautstaerke: ${v}% (-${steps * 10}%)`
           );

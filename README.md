@@ -84,7 +84,7 @@ npm start
 3. Mit **`/stay`** bleibt der Bot dauerhaft im Channel. Wenn niemand mehr im Voice-Channel ist, pausiert die Wiedergabe automatisch; sobald wieder jemand reinkommt, startet sie wieder.
 4. Mit **`/unstay`** beendest du den 24/7-Modus und trennst den Bot direkt.
 5. Im **Browser** Nintendo Music abspielen → es läuft im Voice-Channel.
-6. **`/ping`** ist ein kleiner Test. **`/lautstaerke hoch|runter [anzahl]`** ändert die Lautstärke in 10%-Schritten, **`/lautstaerke set <prozent>`** setzt sie direkt.
+6. **`/ping`** ist ein kleiner Test. **`/volume up|down [anzahl]`** ändert die Lautstärke in 10%-Schritten, **`/volume set <prozent>`** setzt sie direkt.
 7. **`/track <name>`** und **`/title <name>`** suchen Titel zum Abspielen. **`/queue add <name>`** reiht ein, **`/queue clear`** leert die Warteschlange.
 8. **`/leave`** stoppt und trennt den Bot. **`/status`** zeigt den Zustand.
 
